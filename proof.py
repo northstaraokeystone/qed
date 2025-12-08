@@ -1,5 +1,5 @@
 """
-QED v6 Proof CLI Harness
+QED v6/v7 Proof CLI Harness
 
 CLI tool for validating QED telemetry compression and safety guarantees.
 Provides subcommands for:
@@ -7,6 +7,12 @@ Provides subcommands for:
   - sympy_suite: Get constraints per hook, verify, log violations
   - summarize: Output hits/misses/violations/ROI to JSON
   - gates: Run legacy v5 gate checks (synthetic signals)
+
+v7 subcommands:
+  - run-sims: Run pattern simulations via edge_lab_v2
+  - recall-floor: Compute Clopper-Pearson exact recall lower bound
+  - pattern-report: Display pattern library with sorting/filtering
+  - clarity-audit: Process receipts through ClarityClean adapter
 
 What to prove:
   - Recall >= 99.67% (95% CI on 900 anomalies)
@@ -36,6 +42,20 @@ except ImportError:
 
 import qed
 import sympy_constraints
+
+# v7 imports
+from scipy.stats import beta
+from edge_lab_v2 import run_pattern_sims
+from shared_anomalies import load_library
+from clarity_clean_adapter import process_receipts
+
+try:
+    from rich.console import Console
+    from rich.table import Table
+
+    RICH_AVAILABLE = True
+except ImportError:
+    RICH_AVAILABLE = False
 
 # --- KPI Thresholds ---
 KPI_RECALL_THRESHOLD = 0.9967  # 99.67% recall CI
@@ -612,13 +632,236 @@ def generate_edge_lab_sample(
     print(f"Generated {n_anomalies + n_normals} scenarios to {output_path}")
 
 
+# --- v7 Subcommands ---
+
+
+def run_sims(
+    receipts_dir: str = "receipts/",
+    patterns_path: str = "data/shared_anomalies.jsonl",
+    n_per_hook: int = 1000,
+    output: str = "data/sim_results.json",
+) -> Dict[str, Any]:
+    """
+    Run pattern simulations via edge_lab_v2.
+
+    Calls run_pattern_sims() with progress tracking and writes results to JSON.
+    Returns summary dict with n_tests, aggregate_recall, aggregate_fp_rate.
+    """
+    # Load patterns for progress tracking
+    patterns = load_library(patterns_path)
+
+    # Run simulations with progress
+    results = run_pattern_sims(
+        receipts_dir=receipts_dir,
+        patterns_path=patterns_path,
+        n_per_hook=n_per_hook,
+        progress_callback=lambda: tqdm(patterns, desc="Running pattern sims"),
+    )
+
+    # Write results to output file
+    output_path = Path(output)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open("w") as f:
+        json.dump(results, f, indent=2)
+
+    # Compute summary
+    n_tests = results.get("n_tests", 0)
+    aggregate_recall = results.get("aggregate_recall", 0.0)
+    aggregate_fp_rate = results.get("aggregate_fp_rate", 0.0)
+
+    return {
+        "n_tests": n_tests,
+        "aggregate_recall": aggregate_recall,
+        "aggregate_fp_rate": aggregate_fp_rate,
+        "output_path": str(output_path),
+    }
+
+
+def recall_floor(
+    sim_results_path: Optional[str] = "data/sim_results.json",
+    confidence: float = 0.95,
+    n_tests: Optional[int] = None,
+    n_misses: Optional[int] = None,
+) -> Dict[str, Any]:
+    """
+    Compute Clopper-Pearson exact recall lower bound.
+
+    Uses scipy.stats.beta.ppf for exact binomial confidence interval.
+    Formula: beta.ppf(alpha/2, k, n-k+1) where k=successes, n=total.
+
+    Returns dict with recall_floor, confidence, n_tests, n_misses.
+    """
+    # Get n_tests and n_misses from sim_results or overrides
+    if n_tests is None or n_misses is None:
+        if sim_results_path is None:
+            raise ValueError(
+                "Must provide either sim_results_path or both n_tests and n_misses"
+            )
+        with open(sim_results_path, "r") as f:
+            sim_data = json.load(f)
+
+        if n_tests is None:
+            n_tests = sim_data.get("n_tests", 0)
+        if n_misses is None:
+            n_misses = sim_data.get("n_misses", 0)
+
+    # Compute Clopper-Pearson exact lower bound
+    # k = number of successes (hits), n = total tests
+    n_successes = n_tests - n_misses
+    alpha = 1.0 - confidence
+
+    if n_successes == 0:
+        # Lower bound is 0 when no successes
+        lower_bound = 0.0
+    else:
+        # Clopper-Pearson exact lower bound
+        # beta.ppf(alpha/2, k, n-k+1) gives lower bound for proportion k/n
+        lower_bound = float(beta.ppf(alpha / 2, n_successes, n_misses + 1))
+
+    return {
+        "recall_floor": lower_bound,
+        "confidence": confidence,
+        "n_tests": n_tests,
+        "n_misses": n_misses,
+        "n_successes": n_successes,
+    }
+
+
+def pattern_report(
+    patterns_path: str = "data/shared_anomalies.jsonl",
+    sort_by: str = "dollar_value",
+    exploit_only: bool = False,
+    output_format: str = "table",
+) -> List[Dict[str, Any]]:
+    """
+    Load and display pattern library with sorting and filtering.
+
+    Loads patterns via shared_anomalies.load_library(), sorts by selected field,
+    and optionally filters for exploit_grade=true patterns only.
+
+    Returns list of pattern dicts.
+    """
+    patterns = load_library(patterns_path)
+
+    # Filter if exploit_only
+    if exploit_only:
+        patterns = [p for p in patterns if p.get("exploit_grade", False)]
+
+    # Sort by selected field (descending)
+    sort_key_map = {
+        "dollar_value": lambda p: p.get("dollar_value", 0),
+        "recall": lambda p: p.get("recall", 0),
+        "exploit_grade": lambda p: (1 if p.get("exploit_grade", False) else 0),
+    }
+    sort_fn = sort_key_map.get(sort_by, sort_key_map["dollar_value"])
+    patterns = sorted(patterns, key=sort_fn, reverse=True)
+
+    # Output in requested format
+    if output_format == "json":
+        print(json.dumps(patterns, indent=2))
+    elif output_format == "table":
+        if RICH_AVAILABLE:
+            console = Console()
+            table = Table(title="Pattern Report")
+
+            table.add_column("pattern_id", style="cyan", no_wrap=True)
+            table.add_column("physics_domain", style="green")
+            table.add_column("failure_mode", style="yellow")
+            table.add_column("dollar_value", justify="right", style="magenta")
+            table.add_column("recall", justify="right", style="blue")
+            table.add_column("fp_rate", justify="right", style="red")
+            table.add_column("exploit_grade", justify="center", style="bold")
+
+            for p in patterns:
+                pattern_id = str(p.get("pattern_id", ""))[:20]  # truncated
+                physics_domain = str(p.get("physics_domain", ""))
+                failure_mode = str(p.get("failure_mode", ""))
+                dollar_value = f"${p.get('dollar_value', 0):,.0f}"
+                recall_val = f"{p.get('recall', 0):.4f}"
+                fp_rate = f"{p.get('fp_rate', 0):.4f}"
+                exploit = "Yes" if p.get("exploit_grade", False) else "No"
+
+                table.add_row(
+                    pattern_id,
+                    physics_domain,
+                    failure_mode,
+                    dollar_value,
+                    recall_val,
+                    fp_rate,
+                    exploit,
+                )
+
+            console.print(table)
+        else:
+            # Fallback to simple text table
+            header = (
+                f"{'pattern_id':<20} {'physics_domain':<15} {'failure_mode':<20} "
+                f"{'dollar_value':>12} {'recall':>8} {'fp_rate':>8} {'exploit':>8}"
+            )
+            print(header)
+            print("-" * len(header))
+            for p in patterns:
+                pattern_id = str(p.get("pattern_id", ""))[:20]
+                physics_domain = str(p.get("physics_domain", ""))[:15]
+                failure_mode = str(p.get("failure_mode", ""))[:20]
+                dollar_value = p.get("dollar_value", 0)
+                recall_val = p.get("recall", 0)
+                fp_rate = p.get("fp_rate", 0)
+                exploit = "Yes" if p.get("exploit_grade", False) else "No"
+                print(
+                    f"{pattern_id:<20} {physics_domain:<15} {failure_mode:<20} "
+                    f"{dollar_value:>12,.0f} {recall_val:>8.4f} {fp_rate:>8.4f} {exploit:>8}"
+                )
+
+    return patterns
+
+
+def clarity_audit(
+    receipts_path: str,
+    output_corpus: Optional[str] = None,
+    output_receipt: str = "data/clarity_receipts.jsonl",
+) -> Dict[str, Any]:
+    """
+    Process receipts through ClarityClean adapter.
+
+    Calls clarity_clean_adapter.process_receipts() and emits ClarityCleanReceipt
+    to JSONL output.
+
+    Returns summary dict with token_count, anomaly_density, noise_ratio, corpus_hash.
+    """
+    # Process receipts
+    result = process_receipts(
+        receipts_path=receipts_path,
+        output_corpus=output_corpus,
+    )
+
+    # Extract ClarityCleanReceipt
+    receipt = result.get("receipt", {})
+
+    # Write receipt to JSONL
+    output_path = Path(output_receipt)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open("a") as f:
+        f.write(json.dumps(receipt) + "\n")
+
+    # Return summary
+    return {
+        "token_count": receipt.get("token_count", 0),
+        "anomaly_density": receipt.get("anomaly_density", 0.0),
+        "noise_ratio": receipt.get("noise_ratio", 0.0),
+        "corpus_hash": receipt.get("corpus_hash", ""),
+        "output_receipt": str(output_path),
+        "output_corpus": output_corpus,
+    }
+
+
 # --- CLI Main ---
 
 
 def main() -> int:
     """Main CLI entry point."""
     parser = argparse.ArgumentParser(
-        description="QED v6 Proof CLI Harness",
+        description="QED v6/v7 Proof CLI Harness",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -626,6 +869,12 @@ Examples:
   python proof.py replay sample.jsonl      # Replay scenarios from JSONL
   python proof.py sympy_suite tesla_fsd    # Check constraints for hook
   python proof.py generate --output edge_lab_sample.jsonl
+
+v7 Commands:
+  python proof.py run-sims                 # Run pattern simulations
+  python proof.py recall-floor             # Compute recall lower bound
+  python proof.py pattern-report           # Display pattern library
+  python proof.py clarity-audit --receipts-path receipts.jsonl
         """,
     )
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
@@ -726,6 +975,120 @@ Examples:
         help="Path to JSON file with replay results",
     )
 
+    # --- v7 Subcommands ---
+
+    run_sims_parser = subparsers.add_parser(
+        "run-sims",
+        help="Run pattern simulations via edge_lab_v2",
+    )
+    run_sims_parser.add_argument(
+        "--receipts-dir",
+        type=str,
+        default="receipts/",
+        help="Directory containing receipt files (default: receipts/)",
+    )
+    run_sims_parser.add_argument(
+        "--patterns-path",
+        type=str,
+        default="data/shared_anomalies.jsonl",
+        help="Path to patterns JSONL file (default: data/shared_anomalies.jsonl)",
+    )
+    run_sims_parser.add_argument(
+        "--n-per-hook",
+        type=int,
+        default=1000,
+        help="Number of simulations per hook (default: 1000)",
+    )
+    run_sims_parser.add_argument(
+        "--output",
+        type=str,
+        default="data/sim_results.json",
+        help="Output JSON file for results (default: data/sim_results.json)",
+    )
+
+    recall_floor_parser = subparsers.add_parser(
+        "recall-floor",
+        help="Compute Clopper-Pearson exact recall lower bound",
+    )
+    recall_floor_parser.add_argument(
+        "--sim-results",
+        type=str,
+        default="data/sim_results.json",
+        help="Path to simulation results JSON (default: data/sim_results.json)",
+    )
+    recall_floor_parser.add_argument(
+        "--confidence",
+        type=float,
+        default=0.95,
+        help="Confidence level (default: 0.95)",
+    )
+    recall_floor_parser.add_argument(
+        "--n-tests",
+        type=int,
+        default=None,
+        help="Override n_tests from sim results",
+    )
+    recall_floor_parser.add_argument(
+        "--n-misses",
+        type=int,
+        default=None,
+        help="Override n_misses from sim results",
+    )
+
+    pattern_report_parser = subparsers.add_parser(
+        "pattern-report",
+        help="Display pattern library with sorting and filtering",
+    )
+    pattern_report_parser.add_argument(
+        "--patterns-path",
+        type=str,
+        default="data/shared_anomalies.jsonl",
+        help="Path to patterns JSONL file (default: data/shared_anomalies.jsonl)",
+    )
+    pattern_report_parser.add_argument(
+        "--sort-by",
+        type=str,
+        choices=["dollar_value", "recall", "exploit_grade"],
+        default="dollar_value",
+        help="Sort field (default: dollar_value)",
+    )
+    pattern_report_parser.add_argument(
+        "--exploit-only",
+        action="store_true",
+        help="Show only exploit_grade=true patterns",
+    )
+    pattern_report_parser.add_argument(
+        "--format",
+        type=str,
+        choices=["table", "json"],
+        default="table",
+        dest="output_format",
+        help="Output format (default: table)",
+    )
+
+    clarity_audit_parser = subparsers.add_parser(
+        "clarity-audit",
+        help="Process receipts through ClarityClean adapter",
+    )
+    clarity_audit_parser.add_argument(
+        "--receipts-path",
+        type=str,
+        required=True,
+        help="Path to receipts file (required)",
+    )
+    clarity_audit_parser.add_argument(
+        "--output-corpus",
+        type=str,
+        default=None,
+        help="Path to write cleaned corpus (optional)",
+    )
+    clarity_audit_parser.add_argument(
+        "--output-receipt",
+        type=str,
+        default="data/clarity_receipts.jsonl",
+        help="Path to write ClarityCleanReceipt JSONL (default: data/clarity_receipts.jsonl)",
+    )
+
     args = parser.parse_args()
 
     if args.command == "gates":
@@ -798,6 +1161,60 @@ Examples:
 
         if not summary["kpi"]["all_pass"]:
             return 1
+
+    # --- v7 Command Handlers ---
+
+    elif args.command == "run-sims":
+        result = run_sims(
+            receipts_dir=args.receipts_dir,
+            patterns_path=args.patterns_path,
+            n_per_hook=args.n_per_hook,
+            output=args.output,
+        )
+        print(
+            f"Simulation complete: n_tests={result['n_tests']}, "
+            f"aggregate_recall={result['aggregate_recall']:.4f}, "
+            f"aggregate_fp_rate={result['aggregate_fp_rate']:.4f}"
+        )
+        print(f"Results written to {result['output_path']}")
+
+    elif args.command == "recall-floor":
+        result = recall_floor(
+            sim_results_path=args.sim_results,
+            confidence=args.confidence,
+            n_tests=args.n_tests,
+            n_misses=args.n_misses,
+        )
+        confidence_pct = result["confidence"] * 100
+        print(
+            f"Recall floor: {result['recall_floor']:.4f} at {confidence_pct:.0f}% confidence "
+            f"({result['n_tests']} tests, {result['n_misses']} misses)"
+        )
+
+    elif args.command == "pattern-report":
+        pattern_report(
+            patterns_path=args.patterns_path,
+            sort_by=args.sort_by,
+            exploit_only=args.exploit_only,
+            output_format=args.output_format,
+        )
+
+    elif args.command == "clarity-audit":
+        result = clarity_audit(
+            receipts_path=args.receipts_path,
+            output_corpus=args.output_corpus,
+            output_receipt=args.output_receipt,
+        )
+        print(
+            f"ClarityClean audit complete:\n"
+            f"  token_count: {result['token_count']}\n"
+            f"  anomaly_density: {result['anomaly_density']:.4f}\n"
+            f"  noise_ratio: {result['noise_ratio']:.4f}\n"
+            f"  corpus_hash: {result['corpus_hash']}"
+        )
+        print(f"Receipt written to {result['output_receipt']}")
+        if result["output_corpus"]:
+            print(f"Corpus written to {result['output_corpus']}")
 
     else:
         parser.print_help()
