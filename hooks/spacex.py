@@ -10,6 +10,8 @@ its safety threshold lands at 10.0 internal units, with headroom up to about
 
 from typing import Any, Dict, List
 
+from shared_anomalies import get_patterns_for_hook
+
 # -----------------------------------------------------------------------------
 # Hook metadata for QED v6 edge lab integration
 # -----------------------------------------------------------------------------
@@ -414,6 +416,23 @@ def _run_from_csv(args: argparse.Namespace) -> None:
         window_index += 1
 
 
+def get_cross_domain_config() -> Dict[str, Any]:
+    """
+    Return cross-domain integration configuration for SpaceX.
+
+    SpaceX is a TARGET for:
+      - battery_thermal from Tesla
+
+    SpaceX exports nothing.
+    """
+    return {
+        "exports": {},
+        "accepts": {
+            "battery_thermal": "tesla",
+        },
+    }
+
+
 def get_edge_lab_scenarios() -> List[Dict[str, Any]]:
     """
     Return edge lab test scenarios for SpaceX telemetry.
@@ -423,43 +442,82 @@ def get_edge_lab_scenarios() -> List[Dict[str, Any]]:
         - type: scenario type (spike, step, drift, normal)
         - expected_loss: expected loss threshold (>0.1 for high-loss scenarios)
         - signal: list of float values representing the test signal
+        - pattern_id: optional pattern ID from shared_anomalies (None for legacy)
 
-    Returns 5 scenarios including high-loss edge cases for ROI validation.
+    Returns hand-crafted scenarios plus any patterns from shared_anomalies,
+    including cross-domain patterns from Tesla battery_thermal.
     """
     import numpy as np_local
 
-    return [
+    # Hand-crafted legacy scenarios (pattern_id=None)
+    legacy_scenarios = [
         {
             "id": "vibe_exceed",
             "type": "spike",
             "expected_loss": 0.16,
             "signal": [0.6] * 1000,  # Exceeds 0.5mm vibe threshold
+            "pattern_id": None,
         },
         {
             "id": "thrust_anomaly",
             "type": "step",
             "expected_loss": 0.14,
             "signal": [0.0] * 500 + [0.4] * 500,  # Sudden thrust change
+            "pattern_id": None,
         },
         {
             "id": "orbit_drift",
             "type": "drift",
             "expected_loss": 0.11,
             "signal": list(np_local.linspace(0, 0.5, 1000)),  # Gradual drift to threshold
+            "pattern_id": None,
         },
         {
             "id": "chamber_spike",
             "type": "spike",
             "expected_loss": 0.19,
             "signal": [21.0] * 1000,  # Exceeds 20.0 amplitude bound
+            "pattern_id": None,
         },
         {
             "id": "launch_normal",
             "type": "normal",
             "expected_loss": 0.04,
             "signal": [15.0] * 1000,  # Nominal flight telemetry
+            "pattern_id": None,
         },
     ]
+
+    # Query shared_anomalies for patterns where "spacex" in hooks
+    try:
+        patterns = get_patterns_for_hook("spacex")
+    except Exception:
+        patterns = []
+
+    # Also include cross-domain patterns from Tesla battery_thermal
+    cross_domain_config = get_cross_domain_config()
+    for domain, source in cross_domain_config.get("accepts", {}).items():
+        try:
+            source_patterns = get_patterns_for_hook(source)
+            for p in source_patterns:
+                if p.physics_domain == domain and "spacex" in p.cross_domain_targets:
+                    patterns.append(p)
+        except Exception:
+            pass
+
+    # Convert patterns to scenario format
+    pattern_scenarios = []
+    for p in patterns:
+        scenario = {
+            "id": f"pattern_{p.pattern_id}",
+            "type": p.failure_mode,
+            "expected_loss": 1.0 - p.validation_recall if p.validation_recall > 0 else 0.1,
+            "signal": p.params.get("signal", [0.0] * 1000),
+            "pattern_id": p.pattern_id,
+        }
+        pattern_scenarios.append(scenario)
+
+    return legacy_scenarios + pattern_scenarios
 
 
 def main() -> None:
