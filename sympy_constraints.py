@@ -22,17 +22,14 @@ Constraint Types:
     4. mse_max: reconstruction_mse ≤ threshold     (quality gate)
 """
 
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
-import math
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 # SymPy imports with fallback for lightweight environments
 try:
-    from sympy import symbols, sin, pi, Abs, lambdify, Rational
-    from sympy.core.expr import Expr
+    from sympy import symbols, Abs, lambdify
     SYMPY_AVAILABLE = True
 except ImportError:
     SYMPY_AVAILABLE = False
-    Expr = None  # type: ignore
 
 # -----------------------------------------------------------------------------
 # Symbolic variable definitions (used when SymPy is available)

@@ -10,7 +10,6 @@ Tests cover:
 """
 
 import time
-import pytest
 import sympy_constraints
 
 
@@ -74,10 +73,10 @@ class TestGetConstraintEvaluators:
                 amp_eval = fn
                 break
         assert amp_eval is not None
-        # Tesla bound is 14.7 (lambdify returns numpy bool, use == not is)
-        assert amp_eval(10.0) == True   # Below bound
-        assert amp_eval(14.7) == True   # At bound
-        assert amp_eval(15.0) == False  # Above bound
+        # Tesla bound is 14.7
+        assert amp_eval(10.0)       # Below bound
+        assert amp_eval(14.7)       # At bound
+        assert not amp_eval(15.0)   # Above bound
 
     def test_ratio_evaluator_generic(self):
         """Ratio evaluator correctly checks minimum."""
@@ -88,10 +87,10 @@ class TestGetConstraintEvaluators:
                 ratio_eval = fn
                 break
         assert ratio_eval is not None
-        # Generic ratio minimum is 20.0 (lambdify returns numpy bool)
-        assert ratio_eval(25.0) == True   # Above min
-        assert ratio_eval(20.0) == True   # At min
-        assert ratio_eval(15.0) == False  # Below min
+        # Generic ratio minimum is 20.0
+        assert ratio_eval(25.0)       # Above min
+        assert ratio_eval(20.0)       # At min
+        assert not ratio_eval(15.0)   # Below min
 
     def test_savings_evaluator_spacex(self):
         """Savings evaluator correctly checks ROI threshold."""
@@ -102,10 +101,10 @@ class TestGetConstraintEvaluators:
                 savings_eval = fn
                 break
         assert savings_eval is not None
-        # SpaceX savings minimum is 10.0 (millions) (lambdify returns numpy bool)
-        assert savings_eval(15.0) == True   # Above min
-        assert savings_eval(10.0) == True   # At min
-        assert savings_eval(5.0) == False   # Below min
+        # SpaceX savings minimum is 10.0 (millions)
+        assert savings_eval(15.0)       # Above min
+        assert savings_eval(10.0)       # At min
+        assert not savings_eval(5.0)    # Below min
 
     def test_mse_evaluator_neuralink(self):
         """MSE evaluator correctly checks maximum."""
@@ -116,10 +115,10 @@ class TestGetConstraintEvaluators:
                 mse_eval = fn
                 break
         assert mse_eval is not None
-        # Neuralink MSE max is 0.001 (lambdify returns numpy bool)
-        assert mse_eval(0.0005) == True   # Below max
-        assert mse_eval(0.001) == True    # At max
-        assert mse_eval(0.002) == False   # Above max
+        # Neuralink MSE max is 0.001
+        assert mse_eval(0.0005)       # Below max
+        assert mse_eval(0.001)        # At max
+        assert not mse_eval(0.002)    # Above max
 
 
 class TestEvaluateAll:
