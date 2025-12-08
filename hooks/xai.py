@@ -6,11 +6,19 @@ safety or critical threshold maps to about 10.0 in QED space (QED's recall thres
 Exposes CLI: 'demo' for synthetic signals and 'from-jsonl' for real telemetry windowing.
 """
 
+from typing import Any, Dict, List, Optional
+
+# -----------------------------------------------------------------------------
+# Hook metadata for QED v6 edge lab integration
+# -----------------------------------------------------------------------------
+HOOK_NAME: str = "xai_eval"
+COMPANY: str = "xai"
+STREAM_ID: str = "grok_metrics"
+
 import argparse
 import json
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional
 
 import numpy as np
 
@@ -713,6 +721,52 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     from_jsonl.set_defaults(func=run_from_jsonl)
 
     return parser
+
+
+def get_edge_lab_scenarios() -> List[Dict[str, Any]]:
+    """
+    Return edge lab test scenarios for xAI LLM telemetry.
+
+    Each scenario is a dict with:
+        - id: unique scenario identifier
+        - type: scenario type (spike, step, drift, normal)
+        - expected_loss: expected loss threshold (>0.1 for high-loss scenarios)
+        - signal: list of float values representing the test signal
+
+    Returns 5 scenarios including high-loss edge cases for ROI validation.
+    """
+    return [
+        {
+            "id": "logit_spike",
+            "type": "spike",
+            "expected_loss": 0.18,
+            "signal": [1e7] * 1000,  # Logit spike exceeds 1e6 threshold
+        },
+        {
+            "id": "recall_drop",
+            "type": "step",
+            "expected_loss": 0.16,
+            "signal": [0.99] * 500 + [0.90] * 500,  # Recall drops below 0.95
+        },
+        {
+            "id": "entropy_squeeze",
+            "type": "drift",
+            "expected_loss": 0.13,
+            "signal": [float(5.0 - i * 0.004) for i in range(1000)],  # Entropy squeeze
+        },
+        {
+            "id": "kv_phase_drift",
+            "type": "drift",
+            "expected_loss": 0.11,
+            "signal": [float(0.32 + i * 0.0005) for i in range(1000)],  # Phase density drift
+        },
+        {
+            "id": "inference_normal",
+            "type": "normal",
+            "expected_loss": 0.04,
+            "signal": [5.0] * 1000,  # Nominal inference metrics
+        },
+    ]
 
 
 def main(argv: Optional[List[str]] = None) -> None:

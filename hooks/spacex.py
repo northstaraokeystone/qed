@@ -8,11 +8,19 @@ its safety threshold lands at 10.0 internal units, with headroom up to about
   - 'from-csv' for windowed analysis of recorded telemetry
 """
 
+from typing import Any, Dict, List
+
+# -----------------------------------------------------------------------------
+# Hook metadata for QED v6 edge lab integration
+# -----------------------------------------------------------------------------
+HOOK_NAME: str = "spacex_vibe"
+COMPANY: str = "spacex"
+STREAM_ID: str = "merlin_sensor"
+
 import argparse
 import csv
 import json
 from pathlib import Path
-from typing import Any, Dict
 
 import numpy as np
 
@@ -404,6 +412,54 @@ def _run_from_csv(args: argparse.Namespace) -> None:
             print(json.dumps(payload))
 
         window_index += 1
+
+
+def get_edge_lab_scenarios() -> List[Dict[str, Any]]:
+    """
+    Return edge lab test scenarios for SpaceX telemetry.
+
+    Each scenario is a dict with:
+        - id: unique scenario identifier
+        - type: scenario type (spike, step, drift, normal)
+        - expected_loss: expected loss threshold (>0.1 for high-loss scenarios)
+        - signal: list of float values representing the test signal
+
+    Returns 5 scenarios including high-loss edge cases for ROI validation.
+    """
+    import numpy as np_local
+
+    return [
+        {
+            "id": "vibe_exceed",
+            "type": "spike",
+            "expected_loss": 0.16,
+            "signal": [0.6] * 1000,  # Exceeds 0.5mm vibe threshold
+        },
+        {
+            "id": "thrust_anomaly",
+            "type": "step",
+            "expected_loss": 0.14,
+            "signal": [0.0] * 500 + [0.4] * 500,  # Sudden thrust change
+        },
+        {
+            "id": "orbit_drift",
+            "type": "drift",
+            "expected_loss": 0.11,
+            "signal": list(np_local.linspace(0, 0.5, 1000)),  # Gradual drift to threshold
+        },
+        {
+            "id": "chamber_spike",
+            "type": "spike",
+            "expected_loss": 0.19,
+            "signal": [21.0] * 1000,  # Exceeds 20.0 amplitude bound
+        },
+        {
+            "id": "launch_normal",
+            "type": "normal",
+            "expected_loss": 0.04,
+            "signal": [15.0] * 1000,  # Nominal flight telemetry
+        },
+    ]
 
 
 def main() -> None:

@@ -9,11 +9,19 @@ maps to 10.0 internal units (QED's internal recall threshold). Exposes a small C
 
 from __future__ import annotations
 
+from typing import Any, Dict, List
+
+# -----------------------------------------------------------------------------
+# Hook metadata for QED v6 edge lab integration
+# -----------------------------------------------------------------------------
+HOOK_NAME: str = "boring_tbm"
+COMPANY: str = "boring"
+STREAM_ID: str = "tbm_sensors"
+
 import argparse
 import csv
 import json
 from pathlib import Path
-from typing import Dict, List
 
 import numpy as np
 
@@ -204,6 +212,52 @@ def _run_qed_scaled(
         "classification": classification,
         "health": health,
     }
+
+
+def get_edge_lab_scenarios() -> List[Dict[str, Any]]:
+    """
+    Return edge lab test scenarios for Boring Company TBM telemetry.
+
+    Each scenario is a dict with:
+        - id: unique scenario identifier
+        - type: scenario type (spike, step, drift, normal)
+        - expected_loss: expected loss threshold (>0.1 for high-loss scenarios)
+        - signal: list of float values representing the test signal
+
+    Returns 5 scenarios including high-loss edge cases for ROI validation.
+    """
+    return [
+        {
+            "id": "pressure_surge",
+            "type": "spike",
+            "expected_loss": 0.17,
+            "signal": [320.0] * 1000,  # Exceeds 315 bar threshold
+        },
+        {
+            "id": "vibration_exceed",
+            "type": "spike",
+            "expected_loss": 0.15,
+            "signal": [3.8] * 1000,  # Exceeds 3.5g threshold
+        },
+        {
+            "id": "torque_ramp",
+            "type": "drift",
+            "expected_loss": 0.12,
+            "signal": [float(i * 5) for i in range(1000)],  # Gradual torque increase
+        },
+        {
+            "id": "cutterhead_step",
+            "type": "step",
+            "expected_loss": 0.14,
+            "signal": [200.0] * 500 + [400.0] * 500,  # Sudden load change
+        },
+        {
+            "id": "tunnel_normal",
+            "type": "normal",
+            "expected_loss": 0.03,
+            "signal": [250.0] * 1000,  # Nominal boring operation
+        },
+    ]
 
 
 def main() -> None:
