@@ -1,0 +1,5 @@
+{"scenario_id": "scenario_001", "hook": "tesla", "pattern_id": "a3f8b2c1e9d74056", "type": "anomaly", "expected_loss": 2500000.0, "description": "Battery thermal runaway detected during rapid charging cycle"}
+{"scenario_id": "scenario_002", "hook": "tesla", "pattern_id": null, "type": "normal", "expected_loss": 0.0, "description": "Baseline vehicle operation with nominal battery temperatures"}
+{"scenario_id": "scenario_003", "hook": "spacex", "pattern_id": "a3f8b2c1e9d74056", "type": "anomaly", "expected_loss": 8500000.0, "description": "Thermal anomaly in rocket battery pack during pre-launch sequence"}
+{"scenario_id": "scenario_004", "hook": "starlink", "pattern_id": "b7e4d9f2a1c86352", "type": "anomaly", "expected_loss": 1200000.0, "description": "Satellite communication signal dropout exceeding threshold duration"}
+{"scenario_id": "scenario_005", "hook": "tesla", "pattern_id": "c9d2e8a4b3f71604", "type": "near_miss", "expected_loss": 500000.0, "description": "Brake temperature approaching fade threshold during mountain descent"}
