@@ -16,11 +16,19 @@ import argparse
 import csv
 import json
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 import numpy as np
 
 import qed
+from shared_anomalies import get_patterns_for_hook
+
+# -----------------------------------------------------------------------------
+# Hook metadata for QED v6 edge lab integration
+# -----------------------------------------------------------------------------
+HOOK_NAME: str = "neuralink_neural"
+COMPANY: str = "neuralink"
+STREAM_ID: str = "neural_stream"
 
 _NEURAL_CHANNELS: Dict[str, Dict[str, float | str]] = {
     "micro_ecog": {
@@ -254,6 +262,92 @@ def _run_qed_scaled(
         "classification": classification,
         "health": health,
     }
+
+
+def get_cross_domain_config() -> Dict[str, Any]:
+    """
+    Return cross-domain integration configuration for Neuralink.
+
+    Neuralink has no cross-domain mappings (neural streams are unique).
+    """
+    return {
+        "exports": {},
+        "accepts": {},
+    }
+
+
+def get_edge_lab_scenarios() -> List[Dict[str, Any]]:
+    """
+    Return edge lab test scenarios for Neuralink neural telemetry.
+
+    Each scenario is a dict with:
+        - id: unique scenario identifier
+        - type: scenario type (spike, step, drift, normal)
+        - expected_loss: expected loss threshold (>0.1 for high-loss scenarios)
+        - signal: list of float values representing the test signal
+        - pattern_id: optional pattern ID from shared_anomalies (None for legacy)
+
+    Returns hand-crafted scenarios plus any patterns from shared_anomalies.
+    No cross-domain patterns (neural streams are unique).
+    """
+    # Hand-crafted legacy scenarios (pattern_id=None)
+    legacy_scenarios = [
+        {
+            "id": "ecog_spike",
+            "type": "spike",
+            "expected_loss": 0.16,
+            "signal": [1100.0] * 1000,  # Exceeds 1000 μV epileptiform threshold
+            "pattern_id": None,
+        },
+        {
+            "id": "gamma_burst",
+            "type": "spike",
+            "expected_loss": 0.14,
+            "signal": [85.0] * 1000,  # Exceeds 80 μV²/Hz gamma threshold
+            "pattern_id": None,
+        },
+        {
+            "id": "decoder_drift",
+            "type": "drift",
+            "expected_loss": 0.12,
+            "signal": [float(80.0 - i * 0.02) for i in range(1000)],  # Confidence drift down
+            "pattern_id": None,
+        },
+        {
+            "id": "signal_dropout",
+            "type": "step",
+            "expected_loss": 0.18,
+            "signal": [500.0] * 500 + [0.0] * 500,  # Sudden signal loss
+            "pattern_id": None,
+        },
+        {
+            "id": "neural_normal",
+            "type": "normal",
+            "expected_loss": 0.04,
+            "signal": [400.0] * 1000,  # Nominal neural activity
+            "pattern_id": None,
+        },
+    ]
+
+    # Query shared_anomalies for patterns where "neuralink" in hooks
+    try:
+        patterns = get_patterns_for_hook("neuralink")
+    except Exception:
+        patterns = []
+
+    # Convert patterns to scenario format
+    pattern_scenarios = []
+    for p in patterns:
+        scenario = {
+            "id": f"pattern_{p.pattern_id}",
+            "type": p.failure_mode,
+            "expected_loss": 1.0 - p.validation_recall if p.validation_recall > 0 else 0.1,
+            "signal": p.params.get("signal", [0.0] * 1000),
+            "pattern_id": p.pattern_id,
+        }
+        pattern_scenarios.append(scenario)
+
+    return legacy_scenarios + pattern_scenarios
 
 
 def main() -> None:
