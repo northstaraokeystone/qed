@@ -26,8 +26,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 # SymPy imports with fallback for lightweight environments
 try:
-    from sympy import Abs, lambdify, symbols
-
+    from sympy import symbols, Abs, lambdify
     SYMPY_AVAILABLE = True
 except ImportError:
     SYMPY_AVAILABLE = False
@@ -37,13 +36,11 @@ except ImportError:
 # -----------------------------------------------------------------------------
 if SYMPY_AVAILABLE:
     # Time-domain variables for physics constraints
-    t, A, f, phi = symbols("t A f phi", real=True)
+    t, A, f, phi = symbols('t A f phi', real=True)
     # Aggregate metrics for ROI/quality gates
-    ratio, savings_M, mse, recall = symbols(
-        "ratio savings_M mse recall", real=True, positive=True
-    )
+    ratio, savings_M, mse, recall = symbols('ratio savings_M mse recall', real=True, positive=True)
     # Bound parameter (varies by scenario)
-    bound = symbols("bound", real=True, positive=True)
+    bound = symbols('bound', real=True, positive=True)
 
 
 # -----------------------------------------------------------------------------
@@ -71,10 +68,13 @@ def _make_amplitude_constraint(
     }
 
     if SYMPY_AVAILABLE:
+        # For sinusoidal signals, max|A*sin(...)| = |A|, so constraint is Abs(A) <= bound
+        # Pre-compile to callable: (A_val) -> bool
         expr = Abs(A) <= amplitude_bound
         spec["_sympy_obj"] = expr
         spec["_evaluator"] = lambdify(A, expr, modules=["numpy", "math"])
     else:
+        # Pure Python fallback
         spec["_evaluator"] = lambda A_val: abs(A_val) <= amplitude_bound
 
     return spec
@@ -174,6 +174,7 @@ _CONSTRAINTS: Dict[str, List[ConstraintSpec]] = {
             "ROI ≥ $1M annual savings threshold",
         ),
     ],
+
     # SpaceX flight: higher amplitude tolerance, strict ROI
     "spacex_flight": [
         _make_amplitude_constraint(
@@ -187,6 +188,7 @@ _CONSTRAINTS: Dict[str, List[ConstraintSpec]] = {
             "ROI ≥ $10M for launch telemetry value",
         ),
     ],
+
     # Neuralink: tight bounds for neural signal fidelity
     "neuralink_stream": [
         _make_amplitude_constraint(
@@ -200,6 +202,7 @@ _CONSTRAINTS: Dict[str, List[ConstraintSpec]] = {
             "MSE ≤ 0.001 for high-fidelity neural reconstruction",
         ),
     ],
+
     # Boring tunnel: high vibration tolerance
     "boring_tunnel": [
         _make_amplitude_constraint(
@@ -213,6 +216,7 @@ _CONSTRAINTS: Dict[str, List[ConstraintSpec]] = {
             "compression ratio ≥ 30:1 for tunnel sensor density",
         ),
     ],
+
     # Starlink flow: moderate bounds
     "starlink_flow": [
         _make_amplitude_constraint(
@@ -226,6 +230,7 @@ _CONSTRAINTS: Dict[str, List[ConstraintSpec]] = {
             "ROI ≥ $5M for constellation telemetry",
         ),
     ],
+
     # xAI evaluation: moderate bounds for model metrics
     "xai_eval": [
         _make_amplitude_constraint(
@@ -239,6 +244,7 @@ _CONSTRAINTS: Dict[str, List[ConstraintSpec]] = {
             "MSE ≤ 0.01 for model eval accuracy",
         ),
     ],
+
     # Generic fallback: conservative defaults
     "generic": [
         _make_amplitude_constraint(
@@ -264,7 +270,6 @@ _CONSTRAINTS: Dict[str, List[ConstraintSpec]] = {
 # Public API
 # -----------------------------------------------------------------------------
 
-
 def get_constraints(hook_name: str) -> List[Dict[str, Any]]:
     """
     Get constraint definitions for a given hook_name/scenario.
@@ -284,7 +289,11 @@ def get_constraints(hook_name: str) -> List[Dict[str, Any]]:
         List of constraint dictionaries
     """
     specs = _CONSTRAINTS.get(hook_name, _CONSTRAINTS.get("generic", []))
-    return [{k: v for k, v in spec.items() if not k.startswith("_")} for spec in specs]
+    # Return public view without internal _evaluator/_sympy_obj
+    return [
+        {k: v for k, v in spec.items() if not k.startswith("_")}
+        for spec in specs
+    ]
 
 
 def get_constraint_evaluators(hook_name: str) -> List[Tuple[str, str, Callable]]:
@@ -313,7 +322,10 @@ def get_constraint_evaluators(hook_name: str) -> List[Tuple[str, str, Callable]]
         List of (id, type, callable) tuples for numeric evaluation
     """
     specs = _CONSTRAINTS.get(hook_name, _CONSTRAINTS.get("generic", []))
-    return [(spec["id"], spec["type"], spec["_evaluator"]) for spec in specs]
+    return [
+        (spec["id"], spec["type"], spec["_evaluator"])
+        for spec in specs
+    ]
 
 
 def evaluate_all(
@@ -354,6 +366,7 @@ def evaluate_all(
         cid = spec["id"]
         bound_val = spec["bound"]
 
+        # Map constraint type to provided value
         value: Optional[float] = None
         if ctype == "amplitude_bound" and A is not None:
             value = A
@@ -364,23 +377,23 @@ def evaluate_all(
         elif ctype == "mse_max" and mse is not None:
             value = mse
 
+        # Skip if metric not provided
         if value is None:
             continue
 
+        # Evaluate constraint
         try:
             passed = bool(evaluator(value))
         except (TypeError, ValueError):
             passed = False
 
         if not passed:
-            violations.append(
-                {
-                    "constraint_id": cid,
-                    "constraint_type": ctype,
-                    "value": float(value),
-                    "bound": float(bound_val),
-                }
-            )
+            violations.append({
+                "constraint_id": cid,
+                "constraint_type": ctype,
+                "value": float(value),
+                "bound": float(bound_val),
+            })
 
     return (len(violations) == 0, violations)
 

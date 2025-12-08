@@ -10,7 +10,6 @@ Tests cover:
 """
 
 import time
-
 import sympy_constraints
 
 
@@ -32,6 +31,7 @@ class TestGetConstraints:
             assert "bound" in c
             assert "description" in c
             assert "sympy_expr" in c
+            # Internal keys should NOT be exposed
             assert "_evaluator" not in c
             assert "_sympy_obj" not in c
 
@@ -74,9 +74,9 @@ class TestGetConstraintEvaluators:
                 break
         assert amp_eval is not None
         # Tesla bound is 14.7
-        assert amp_eval(10.0)  # Below bound
-        assert amp_eval(14.7)  # At bound
-        assert not amp_eval(15.0)  # Above bound
+        assert amp_eval(10.0)       # Below bound
+        assert amp_eval(14.7)       # At bound
+        assert not amp_eval(15.0)   # Above bound
 
     def test_ratio_evaluator_generic(self):
         """Ratio evaluator correctly checks minimum."""
@@ -88,9 +88,9 @@ class TestGetConstraintEvaluators:
                 break
         assert ratio_eval is not None
         # Generic ratio minimum is 20.0
-        assert ratio_eval(25.0)  # Above min
-        assert ratio_eval(20.0)  # At min
-        assert not ratio_eval(15.0)  # Below min
+        assert ratio_eval(25.0)       # Above min
+        assert ratio_eval(20.0)       # At min
+        assert not ratio_eval(15.0)   # Below min
 
     def test_savings_evaluator_spacex(self):
         """Savings evaluator correctly checks ROI threshold."""
@@ -102,9 +102,9 @@ class TestGetConstraintEvaluators:
                 break
         assert savings_eval is not None
         # SpaceX savings minimum is 10.0 (millions)
-        assert savings_eval(15.0)  # Above min
-        assert savings_eval(10.0)  # At min
-        assert not savings_eval(5.0)  # Below min
+        assert savings_eval(15.0)       # Above min
+        assert savings_eval(10.0)       # At min
+        assert not savings_eval(5.0)    # Below min
 
     def test_mse_evaluator_neuralink(self):
         """MSE evaluator correctly checks maximum."""
@@ -116,9 +116,9 @@ class TestGetConstraintEvaluators:
                 break
         assert mse_eval is not None
         # Neuralink MSE max is 0.001
-        assert mse_eval(0.0005)  # Below max
-        assert mse_eval(0.001)  # At max
-        assert not mse_eval(0.002)  # Above max
+        assert mse_eval(0.0005)       # Below max
+        assert mse_eval(0.001)        # At max
+        assert not mse_eval(0.002)    # Above max
 
 
 class TestEvaluateAll:
@@ -127,7 +127,10 @@ class TestEvaluateAll:
     def test_all_pass_when_within_bounds(self):
         """All constraints pass when values are within bounds."""
         passed, violations = sympy_constraints.evaluate_all(
-            "tesla_fsd", A=10.0, ratio=60.0, savings_M=38.0
+            "tesla_fsd",
+            A=10.0,        # < 14.7
+            ratio=60.0,    # >= 20
+            savings_M=38.0 # >= 1M
         )
         assert passed is True
         assert violations == []
@@ -135,7 +138,10 @@ class TestEvaluateAll:
     def test_amplitude_violation_detected(self):
         """Amplitude violation is detected and reported."""
         passed, violations = sympy_constraints.evaluate_all(
-            "tesla_fsd", A=15.0, ratio=60.0, savings_M=38.0
+            "tesla_fsd",
+            A=15.0,        # > 14.7 VIOLATION
+            ratio=60.0,
+            savings_M=38.0
         )
         assert passed is False
         assert len(violations) == 1
@@ -147,9 +153,13 @@ class TestEvaluateAll:
     def test_ratio_violation_detected(self):
         """Ratio violation is detected and reported."""
         passed, violations = sympy_constraints.evaluate_all(
-            "generic", A=10.0, ratio=10.0, savings_M=5.0
+            "generic",
+            A=10.0,
+            ratio=10.0,     # < 20 VIOLATION
+            savings_M=5.0
         )
         assert passed is False
+        # Should have ratio violation
         ratio_viol = [v for v in violations if v["constraint_type"] == "ratio_min"]
         assert len(ratio_viol) == 1
         assert ratio_viol[0]["value"] == 10.0
@@ -158,7 +168,9 @@ class TestEvaluateAll:
     def test_savings_violation_detected(self):
         """Savings violation is detected and reported."""
         passed, violations = sympy_constraints.evaluate_all(
-            "spacex_flight", A=15.0, savings_M=5.0
+            "spacex_flight",
+            A=15.0,
+            savings_M=5.0   # < 10M VIOLATION
         )
         assert passed is False
         sav_viol = [v for v in violations if v["constraint_type"] == "savings_min"]
@@ -169,7 +181,9 @@ class TestEvaluateAll:
     def test_mse_violation_detected(self):
         """MSE violation is detected and reported."""
         passed, violations = sympy_constraints.evaluate_all(
-            "neuralink_stream", A=3.0, mse=0.01
+            "neuralink_stream",
+            A=3.0,
+            mse=0.01        # > 0.001 VIOLATION
         )
         assert passed is False
         mse_viol = [v for v in violations if v["constraint_type"] == "mse_max"]
@@ -179,14 +193,21 @@ class TestEvaluateAll:
 
     def test_missing_metrics_skipped_not_violations(self):
         """Metrics not provided are skipped, not treated as violations."""
-        passed, violations = sympy_constraints.evaluate_all("tesla_fsd", A=10.0)
+        # Only provide amplitude, skip ratio and savings
+        passed, violations = sympy_constraints.evaluate_all(
+            "tesla_fsd",
+            A=10.0
+        )
         assert passed is True
         assert violations == []
 
     def test_multiple_violations(self):
         """Multiple violations are detected together."""
         passed, violations = sympy_constraints.evaluate_all(
-            "generic", A=20.0, ratio=10.0, savings_M=0.5
+            "generic",
+            A=20.0,         # > 14.7 VIOLATION
+            ratio=10.0,     # < 20 VIOLATION
+            savings_M=0.5   # < 1M VIOLATION
         )
         assert passed is False
         assert len(violations) == 3
@@ -229,6 +250,7 @@ class TestSympyAvailable:
 
     def test_sympy_available_when_imported(self):
         """SymPy should be available in test environment."""
+        # Since we installed sympy for tests, this should be True
         assert sympy_constraints.sympy_available() is True
 
 
@@ -245,18 +267,23 @@ class TestPerformance:
             fn(12.5)
         elapsed = time.perf_counter() - start
 
-        assert elapsed < 0.1, f"1000 evals took {elapsed * 1000:.2f}ms"
+        # 1000 calls should complete in <100ms (0.1ms per call average)
+        assert elapsed < 0.1, f"1000 evals took {elapsed*1000:.2f}ms"
 
     def test_evaluate_all_under_1ms(self):
         """evaluate_all() completes in <1ms per call."""
         start = time.perf_counter()
         for _ in range(100):
             sympy_constraints.evaluate_all(
-                "tesla_fsd", A=10.0, ratio=60.0, savings_M=38.0
+                "tesla_fsd",
+                A=10.0,
+                ratio=60.0,
+                savings_M=38.0
             )
         elapsed = time.perf_counter() - start
 
-        assert elapsed < 0.1, f"100 evaluate_all calls took {elapsed * 1000:.2f}ms"
+        # 100 calls should complete in <100ms (1ms per call average)
+        assert elapsed < 0.1, f"100 evaluate_all calls took {elapsed*1000:.2f}ms"
 
     def test_get_constraints_under_1ms(self):
         """get_constraints() completes in <1ms."""
@@ -265,7 +292,8 @@ class TestPerformance:
             sympy_constraints.get_constraints("tesla_fsd")
         elapsed = time.perf_counter() - start
 
-        assert elapsed < 0.05, f"100 get_constraints calls took {elapsed * 1000:.2f}ms"
+        # 100 calls should complete in <50ms (<0.5ms per call)
+        assert elapsed < 0.05, f"100 get_constraints calls took {elapsed*1000:.2f}ms"
 
 
 class TestConstraintScenarios:
