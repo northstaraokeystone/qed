@@ -1,5 +1,41 @@
-# QED v6 Telemetry Compression Engine Deployment
-# Persists receipts (JSONL logs) and edge_lab (manifests/samples) via volumes
+# QED v7 Telemetry Compression Engine - Consolidated Kubernetes Configuration
+# Single source of truth for all QED k8s resources
+# Persists data files (anomalies, scenarios, validations, receipts) via PVC
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: qed-system
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: qed-config
+  namespace: qed-system
+data:
+  QED_LOG_LEVEL: INFO
+  QED_DEFAULT_MODE: cli
+  QED_DEFAULT_WINDOW_SECONDS: "1.0"
+  QED_DEFAULT_STRIDE_SECONDS: "0.25"
+  QED_KAFKA_BROKERS: kafka-0.qed.svc.cluster.local:9092
+  QED_S3_BUCKET: qed-telemetry-bucket
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: qed-data-pvc
+  namespace: qed-system
+  labels:
+    app: qed
+    version: v7
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+  # storageClassName: standard  # Uncomment and set for production
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -7,7 +43,7 @@ metadata:
   namespace: qed-system
   labels:
     app: qed
-    version: v6
+    version: v7
 spec:
   replicas: 1
   selector:
@@ -17,7 +53,7 @@ spec:
     metadata:
       labels:
         app: qed
-        version: v6
+        version: v7
     spec:
       securityContext:
         runAsNonRoot: true
@@ -25,24 +61,37 @@ spec:
         runAsGroup: 1000
       containers:
       - name: qed
-        image: qed:v6
+        image: qed:v7
         imagePullPolicy: IfNotPresent
         volumeMounts:
-        - name: receipts
-          mountPath: /receipts
-        - name: edge-lab
-          mountPath: /edge_lab
+        - name: qed-data
+          mountPath: /data
         env:
+        # Data directories
+        - name: DATA_DIR
+          value: "/data"
+        - name: RECEIPTS_DIR
+          value: "/data/receipts"
+        - name: CLARITY_RECEIPTS_DIR
+          value: "/data/receipts/clarity"
+        # Pipeline configuration
+        - name: NHTSA_PIPELINE_CAP
+          value: "10"
+        # Legacy path compatibility
         - name: RECEIPTS_PATH
-          value: /receipts
+          value: "/data/receipts"
         - name: EDGE_LAB_PATH
-          value: /edge_lab
+          value: "/data/edge_lab"
+        # Runtime configuration
         - name: QED_VERSION
-          value: "6.0.0"
+          value: "7.0.0"
         - name: PYTHONDONTWRITEBYTECODE
           value: "1"
         - name: PYTHONUNBUFFERED
           value: "1"
+        envFrom:
+        - configMapRef:
+            name: qed-config
         resources:
           requests:
             cpu: "100m"
@@ -54,7 +103,170 @@ spec:
           readOnlyRootFilesystem: false
           allowPrivilegeEscalation: false
       volumes:
-      - name: receipts
-        emptyDir: {}
-      - name: edge-lab
-        emptyDir: {}
+      - name: qed-data
+        persistentVolumeClaim:
+          claimName: qed-data-pvc
+      # Init container to ensure data directory structure exists
+      initContainers:
+      - name: init-data-dirs
+        image: busybox:1.36
+        command:
+        - sh
+        - -c
+        - |
+          mkdir -p /data/receipts/clarity
+          mkdir -p /data/edge_lab
+          echo "Data directories initialized"
+        volumeMounts:
+        - name: qed-data
+          mountPath: /data
+        securityContext:
+          runAsUser: 1000
+          runAsGroup: 1000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: qed-hooks
+  namespace: qed-system
+  labels:
+    app: qed-hooks
+    version: v7
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: qed-hooks
+  template:
+    metadata:
+      labels:
+        app: qed-hooks
+        version: v7
+    spec:
+      securityContext:
+        runAsNonRoot: true
+      containers:
+      - name: qed-hooks
+        image: ghcr.io/xai/qed-v5:{{TAG}}
+        imagePullPolicy: IfNotPresent
+        env:
+        - name: QED_VERSION
+          value: "7.0.0"
+        - name: PYTHONDONTWRITEBYTECODE
+          value: "1"
+        - name: PYTHONUNBUFFERED
+          value: "1"
+        envFrom:
+        - configMapRef:
+            name: qed-config
+        resources:
+          requests:
+            cpu: "250m"
+            memory: "512Mi"
+          limits:
+            cpu: "2"
+            memory: "2Gi"
+        ports:
+        - containerPort: 8080
+          name: http
+        livenessProbe:
+          exec:
+            command:
+            - python
+            - -c
+            - import qed, sys; sys.exit(0)
+          initialDelaySeconds: 10
+          periodSeconds: 30
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          exec:
+            command:
+            - python
+            - -m
+            - qed
+            - --help
+          initialDelaySeconds: 5
+          periodSeconds: 15
+          timeoutSeconds: 5
+          failureThreshold: 3
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1000
+          runAsGroup: 1000
+          readOnlyRootFilesystem: true
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: qed-hooks
+  namespace: qed-system
+  labels:
+    app: qed-hooks
+    version: v7
+spec:
+  type: ClusterIP
+  selector:
+    app: qed-hooks
+  ports:
+  - port: 80
+    targetPort: 8080
+    name: http
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: qed-hooks
+  namespace: qed-system
+  labels:
+    app: qed-hooks
+    version: v7
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: qed-hooks
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: qed-selftest
+  namespace: qed-system
+  labels:
+    app: qed-selftest
+    version: v7
+spec:
+  template:
+    metadata:
+      labels:
+        app: qed-selftest
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: selftest
+        image: ghcr.io/xai/qed-v5:{{TAG}}
+        imagePullPolicy: IfNotPresent
+        env:
+        - name: QED_VERSION
+          value: "7.0.0"
+        - name: PYTHONDONTWRITEBYTECODE
+          value: "1"
+        - name: PYTHONUNBUFFERED
+          value: "1"
+        envFrom:
+        - configMapRef:
+            name: qed-config
+        command:
+        - python
+        - -m
+        - qed
+        - --help
