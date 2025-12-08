@@ -21,6 +21,7 @@ class QEDReceipt:
     verified: Optional[bool]
     violations: List[Dict[str, Any]]
     trace: str
+    pattern_id: Optional[str] = None
 
 
 def _generate_window_id(scenario: str, n_samples: int) -> str:
@@ -178,6 +179,7 @@ def qed(
     bit_depth: int = 12,
     sample_rate_hz: float = 1000.0,
     hook_name: Optional[str] = None,
+    pattern_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Analyze a 1-second telemetry window and return a compact QED summary.
@@ -233,6 +235,7 @@ def qed(
         verified=verified,
         violations=violations,
         trace=trace,
+        pattern_id=pattern_id,
     )
 
     return {
@@ -243,3 +246,24 @@ def qed(
         "trace": trace,
         "receipt": receipt,
     }
+
+
+def run(
+    window: np.ndarray,
+    hook: Optional[str] = None,
+    pattern_id: Optional[str] = None,
+    **kwargs,
+) -> Dict[str, Any]:
+    """
+    Simplified interface for qed() with edge_lab pattern tracking.
+
+    Args:
+        window: Telemetry signal array
+        hook: Optional hook name for constraint checking
+        pattern_id: Optional SHA3 hash of anomaly pattern that triggered detection
+        **kwargs: Additional arguments passed to qed()
+
+    Returns:
+        QED analysis result dict with receipt
+    """
+    return qed(signal=window, hook_name=hook, pattern_id=pattern_id, **kwargs)
