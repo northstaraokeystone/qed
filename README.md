@@ -33,6 +33,15 @@ Human-in-the-loop signs off on GPT finals, initiates doc prompts, steers drift/h
 
 ---
 
+## What's new in v6
+
+- **Receipts**: QEDReceipt JSONL per window — schema includes model params, compression ratio, QED verified bool, constraint violations. Enables audit trails for TruthRun/ClarityClean.
+- **edge_lab_v1**: JSONL scenario runner for high-loss cases (e.g., anomaly injection via NGSIM). Metrics: hit/miss, latency_ms, compression. Proves 99.67% recall CI.
+- **mesh_view_v1**: Aggregates receipts/manifests into per-company tables (hook, avg_ratio, savings, breach_rate). Binder ROI view precursor.
+- **Sympy checks**: Symbolic constraints (e.g., ∀t |signal| ≤ bound) via lambdify numeric fallback. 99.9% safety vs sampling.
+
+---
+
 ## Hooks (by file)
 
 All hooks expose a small CLI on top of `qed.py` (demo data + “from real telemetry” mode).
