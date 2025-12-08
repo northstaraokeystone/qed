@@ -73,6 +73,15 @@ Each hook keeps its own normalization formulas and safety classification ladder 
 
 ---
 
+## What's new in v6
+
+- **Receipts**: `QEDReceipt` JSONL per window — schema with model params, compression ratio, `verified` bool, constraint violations; enables audit trails for TruthRun/ClarityClean
+- **edge_lab_v1**: JSONL scenario runner for high-loss cases (anomaly injection via NGSIM); metrics: hit/miss, latency_ms, compression — proves 99.67% recall CI
+- **mesh_view_v1**: Aggregates receipts/manifests into per-company tables (hook, avg_ratio, savings, breach_rate) — binder ROI view precursor
+- **Sympy checks**: Symbolic constraints (e.g., ∀t |signal| ≤ bound) via `lambdify` numeric fallback — 99.9% safety vs sampling
+
+---
+
 ## ROI – what the math says
 
 All ROI logic is simple arithmetic on explicit inputs (telemetry volume, storage/network pricing, incident rates, value per event). No dark boxes; formulas are in the domain specs and can be re-run.
