@@ -69,7 +69,7 @@ def check_constraints(
         constraint_type = constraint.get("type", "amplitude_bound")
         bound = constraint.get("bound", float("inf"))
 
-        # Only check amplitude_bound constraints here (other types checked in evaluate_all)
+        # Only check amplitude_bound constraints here (other types in evaluate_all)
         if constraint_type == "amplitude_bound" and abs(A) > bound:
             violations.append(
                 {

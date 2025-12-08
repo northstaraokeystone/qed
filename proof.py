@@ -776,7 +776,8 @@ Examples:
 
         if result["n_violations"] > 0 and not args.verbose:
             print(
-                f"\nNote: {result['n_violations']} violations found. Use --verbose for details."
+                f"\nNote: {result['n_violations']} violations found. "
+                "Use --verbose for details."
             )
 
     elif args.command == "generate":
