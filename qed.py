@@ -1,6 +1,94 @@
-from typing import Any, Dict
+from dataclasses import dataclass, asdict
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional, IO
+import json
+import uuid
 
 import numpy as np
+
+
+@dataclass(frozen=True)
+class QEDReceipt:
+    """Immutable receipt for a single QED telemetry window."""
+
+    ts: str
+    window_id: str
+    params: Dict[str, Any]
+    ratio: float
+    H_bits: float
+    recall: float
+    savings_M: float
+    verified: Optional[bool]
+    violations: List[Dict[str, Any]]
+    trace: str
+
+
+def _generate_window_id(scenario: str, n_samples: int) -> str:
+    """Generate unique window identifier."""
+    return f"{scenario}_{n_samples}_{uuid.uuid4().hex[:12]}"
+
+
+def check_constraints(
+    A: float,
+    f: float,
+    scenario: str,
+    hook_name: Optional[str] = None,
+) -> tuple[Optional[bool], List[Dict[str, Any]]]:
+    """
+    Check amplitude constraints, delegating to sympy_constraints if available.
+
+    Returns (verified, violations) where:
+    - verified: True if all constraints pass, False if any fail, None if not checked
+    - violations: list of constraint violations with details
+    """
+    # Handle NaN/Inf params as violations
+    if not (np.isfinite(A) and np.isfinite(f)):
+        return (
+            False,
+            [
+                {
+                    "constraint_id": "finite_params",
+                    "value": float(A) if np.isfinite(A) else "NaN/Inf",
+                    "bound": "finite",
+                    "ts_offset": 0.0,
+                }
+            ],
+        )
+
+    try:
+        import sympy_constraints
+
+        constraints = sympy_constraints.get_constraints(hook_name or scenario)
+    except ImportError:
+        # sympy_constraints module not available
+        return (None, [])
+    except AttributeError:
+        # Module exists but get_constraints not defined
+        return (None, [])
+
+    violations: List[Dict[str, Any]] = []
+    for constraint in constraints:
+        constraint_id = constraint.get("id", "unknown")
+        bound = constraint.get("bound", float("inf"))
+        if abs(A) > bound:
+            violations.append(
+                {
+                    "constraint_id": constraint_id,
+                    "value": float(A),
+                    "bound": float(bound),
+                    "ts_offset": 0.0,
+                }
+            )
+
+    verified = len(violations) == 0
+    return (verified, violations)
+
+
+def write_receipt_jsonl(receipt: QEDReceipt, fh: IO[str]) -> None:
+    """Append receipt as single JSON line to file handle."""
+    receipt_dict = asdict(receipt)
+    line = json.dumps(receipt_dict, separators=(",", ":"))
+    fh.write(line + "\n")
 
 
 def _estimate_entropy_bits(signal: np.ndarray, bit_depth: int) -> float:
@@ -90,6 +178,7 @@ def qed(
     scenario: str = "tesla_fsd",
     bit_depth: int = 12,
     sample_rate_hz: float = 1000.0,
+    hook_name: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Analyze a 1-second telemetry window and return a compact QED summary.
@@ -100,6 +189,7 @@ def qed(
       - "recall": safety-event recall estimate in [0, 1]
       - "savings_M": ROI in millions of dollars (float)
       - "trace": short string documenting assumptions and scenario
+      - "receipt": QEDReceipt with full params, verified status, and violations
     """
     signal_arr = np.asarray(signal, dtype=np.float64)
     if signal_arr.size == 0:
@@ -119,8 +209,32 @@ def qed(
     savings_M = _estimate_roi_millions(ratio, scenario)
 
     trace = (
-        f"qed_v5 scenario={scenario} "
+        f"qed_v6 scenario={scenario} "
         f"N={signal_arr.size} H≈{int(H_bits)} ratio≈{ratio:.1f}"
+    )
+
+    # v6: Check constraints and generate receipt
+    verified, violations = check_constraints(A, f, scenario, hook_name)
+
+    receipt = QEDReceipt(
+        ts=datetime.now(timezone.utc).isoformat(),
+        window_id=_generate_window_id(scenario, signal_arr.size),
+        params={
+            "A": float(A),
+            "f": float(f),
+            "phi": float(phi),
+            "c": float(c),
+            "scenario": scenario,
+            "bit_depth": bit_depth,
+            "sample_rate_hz": sample_rate_hz,
+        },
+        ratio=float(ratio),
+        H_bits=float(H_bits),
+        recall=float(recall),
+        savings_M=float(savings_M),
+        verified=verified,
+        violations=violations,
+        trace=trace,
     )
 
     return {
@@ -129,4 +243,5 @@ def qed(
         "recall": float(recall),
         "savings_M": float(savings_M),
         "trace": trace,
+        "receipt": receipt,
     }
