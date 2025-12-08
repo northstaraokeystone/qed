@@ -1,8 +1,8 @@
-from dataclasses import dataclass, asdict
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, IO
 import json
 import uuid
+from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
+from typing import IO, Any, Dict, List, Optional
 
 import numpy as np
 
@@ -41,7 +41,6 @@ def check_constraints(
     - verified: True if all constraints pass, False if any fail, None if not checked
     - violations: list of constraint violations with details
     """
-    # Handle NaN/Inf params as violations
     if not (np.isfinite(A) and np.isfinite(f)):
         return (
             False,
@@ -60,17 +59,18 @@ def check_constraints(
 
         constraints = sympy_constraints.get_constraints(hook_name or scenario)
     except ImportError:
-        # sympy_constraints module not available
         return (None, [])
     except AttributeError:
-        # Module exists but get_constraints not defined
         return (None, [])
 
     violations: List[Dict[str, Any]] = []
     for constraint in constraints:
         constraint_id = constraint.get("id", "unknown")
+        constraint_type = constraint.get("type", "amplitude_bound")
         bound = constraint.get("bound", float("inf"))
-        if abs(A) > bound:
+
+        # Only check amplitude_bound constraints here (other types checked in evaluate_all)
+        if constraint_type == "amplitude_bound" and abs(A) > bound:
             violations.append(
                 {
                     "constraint_id": constraint_id,
@@ -156,7 +156,6 @@ def _estimate_roi_millions(ratio: float, scenario: str) -> float:
     months_per_year = 12.0
     days_per_year = 365.0
 
-    # 1 PB = 1e9 MB, per research trace (2M * 938 MB ~ 1.876 PB/day -> 685 PB/year)
     raw_pb_per_day = fleet * data_per_car_mb / 1e9
     raw_pb_per_year = raw_pb_per_day * days_per_year
     raw_cost = raw_pb_per_year * cost_per_pb_month * months_per_year
@@ -213,7 +212,6 @@ def qed(
         f"N={signal_arr.size} H≈{int(H_bits)} ratio≈{ratio:.1f}"
     )
 
-    # v6: Check constraints and generate receipt
     verified, violations = check_constraints(A, f, scenario, hook_name)
 
     receipt = QEDReceipt(

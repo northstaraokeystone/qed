@@ -21,7 +21,6 @@ import argparse
 import json
 import sys
 import time
-from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -30,13 +29,13 @@ import numpy as np
 try:
     from tqdm import tqdm
 except ImportError:
-    # Fallback if tqdm not installed
+
     def tqdm(iterable, **kwargs):  # type: ignore[misc]
         return iterable
 
+
 import qed
 import sympy_constraints
-
 
 # --- KPI Thresholds ---
 KPI_RECALL_THRESHOLD = 0.9967  # 99.67% recall CI
@@ -89,13 +88,10 @@ def _deterministic_check(signal: np.ndarray, sample_rate_hz: float) -> bool:
     out2 = qed.qed(
         signal, scenario="tesla_fsd", bit_depth=12, sample_rate_hz=sample_rate_hz
     )
-    # Compare only v5 keys (ratio, H_bits, recall, savings_M, trace content)
-    # v6 receipt has timestamp/uuid that will differ
     v5_keys = ["ratio", "H_bits", "recall", "savings_M"]
     for key in v5_keys:
         if out1[key] != out2[key]:
             return False
-    # Trace should be deterministic except for any timestamp
     if out1["trace"].split()[0:3] != out2["trace"].split()[0:3]:
         return False
     return True
@@ -141,7 +137,6 @@ def replay(
                 print(f"Skipping line {idx}: JSON decode error: {e}")
             continue
 
-        # Extract or generate signal
         if "signal" in data:
             signal = np.array(data["signal"], dtype=np.float64)
         elif "params" in data:
@@ -161,13 +156,11 @@ def replay(
                 print(f"Skipping line {idx}: no 'signal' or 'params' key")
             continue
 
-        # Use scenario from data if provided
         line_scenario = data.get("scenario", scenario)
         line_bit_depth = data.get("bit_depth", bit_depth)
         line_sample_rate = data.get("sample_rate_hz", sample_rate_hz)
-        expected_label = data.get("label", None)  # anomaly/normal label
+        expected_label = data.get("label", None)
 
-        # Run qed
         t0 = time.perf_counter()
         try:
             out = qed.qed(
@@ -198,7 +191,6 @@ def replay(
             result["savings_M"] = out["savings_M"]
             result["trace"] = out["trace"]
 
-            # Extract receipt info
             receipt = out["receipt"]
             result["verified"] = receipt.verified
             result["violations"] = receipt.violations
@@ -206,17 +198,13 @@ def replay(
 
         if expected_label is not None:
             result["expected_label"] = expected_label
-            # Determine if this is a hit (detected anomaly) or miss
             if out is not None:
                 events = _count_events(signal, threshold=10.0)
                 if expected_label == "anomaly":
-                    # Hit if events detected and high recall
                     result["is_hit"] = events > 0 and out["recall"] >= 0.95
                 else:
-                    # For normal, hit if no violations
                     result["is_hit"] = receipt.verified is True
             else:
-                # Error during processing - count as detection for anomaly
                 result["is_hit"] = expected_label == "anomaly"
 
         results.append(result)
@@ -243,7 +231,6 @@ def sympy_suite(
     constraints = sympy_constraints.get_constraints(hook)
 
     if test_amplitudes is None:
-        # Default test range: 0 to 25 in 0.5 increments
         test_amplitudes = [float(a) for a in np.arange(0.0, 25.5, 0.5)]
 
     violations: List[Dict[str, Any]] = []
@@ -252,31 +239,39 @@ def sympy_suite(
 
     for constraint in tqdm(constraints, desc=f"Checking constraints for {hook}"):
         constraint_id = constraint.get("id", "unknown")
+        constraint_type = constraint.get("type", "amplitude_bound")
         bound = constraint.get("bound", float("inf"))
         description = constraint.get("description", "")
+
+        # Only test amplitude_bound constraints with amplitude values
+        if constraint_type != "amplitude_bound":
+            continue
 
         for A in test_amplitudes:
             total_tests += 1
             exceeds_bound = abs(A) > bound
 
             if exceeds_bound:
-                violations.append({
-                    "constraint_id": constraint_id,
-                    "amplitude": A,
-                    "bound": bound,
-                    "description": description,
-                })
+                violations.append(
+                    {
+                        "constraint_id": constraint_id,
+                        "amplitude": A,
+                        "bound": bound,
+                        "description": description,
+                    }
+                )
             else:
-                passes.append({
-                    "constraint_id": constraint_id,
-                    "amplitude": A,
-                    "bound": bound,
-                })
+                passes.append(
+                    {
+                        "constraint_id": constraint_id,
+                        "amplitude": A,
+                        "bound": bound,
+                    }
+                )
 
-    # Also run through check_constraints for integration test
     verified_at_bound, violations_at_bound = qed.check_constraints(
         constraints[0]["bound"] if constraints else 14.7,
-        40.0,  # test frequency
+        40.0,
         hook,
     )
 
@@ -286,7 +281,7 @@ def sympy_suite(
         "total_tests": total_tests,
         "n_violations": len(violations),
         "n_passes": len(passes),
-        "violations": violations if verbose else violations[:10],  # Limit output
+        "violations": violations if verbose else violations[:10],
         "verified_at_bound": verified_at_bound,
         "violations_at_bound": violations_at_bound,
     }
@@ -325,21 +320,17 @@ def summarize(
     n_scenarios = len(results)
     n_errors = sum(1 for r in results if r.get("error") is not None)
 
-    # Count hits/misses for labeled data
     labeled = [r for r in results if "expected_label" in r]
     anomalies = [r for r in labeled if r["expected_label"] == "anomaly"]
     normals = [r for r in labeled if r["expected_label"] == "normal"]
 
-    # Recall: true positives / total anomalies
     if anomalies:
         hits_anomaly = sum(1 for r in anomalies if r.get("is_hit", False))
         recall = hits_anomaly / len(anomalies)
     else:
         hits_anomaly = 0
-        recall = 1.0  # No anomalies to miss
+        recall = 1.0
 
-    # Precision: true positives / (true positives + false positives)
-    # False positive = normal flagged as anomaly (violation on normal)
     if normals:
         false_positives = sum(1 for r in normals if not r.get("is_hit", True))
         true_positives = hits_anomaly
@@ -351,14 +342,10 @@ def summarize(
     else:
         precision = 1.0
 
-    # Count total violations
     total_violations = sum(
-        len(r.get("violations", []))
-        for r in results
-        if r.get("error") is None
+        len(r.get("violations", [])) for r in results if r.get("error") is None
     )
 
-    # ROI calculation
     valid_results = [r for r in results if r.get("error") is None]
     if valid_results:
         avg_savings_M = np.mean([r.get("savings_M", 0.0) for r in valid_results])
@@ -366,16 +353,14 @@ def summarize(
     else:
         roi_M = 0.0
 
-    # Latency stats
     latencies = [r.get("latency_ms", 0.0) for r in results]
     avg_latency_ms = float(np.mean(latencies)) if latencies else 0.0
     max_latency_ms = float(np.max(latencies)) if latencies else 0.0
 
-    # 95% CI for recall (Wilson score interval approximation)
     if anomalies:
         n = len(anomalies)
         p = recall
-        z = 1.96  # 95% CI
+        z = 1.96
         denom = 1 + z**2 / n
         center = (p + z**2 / (2 * n)) / denom
         spread = z * np.sqrt((p * (1 - p) + z**2 / (4 * n)) / n) / denom
@@ -384,12 +369,13 @@ def summarize(
     else:
         recall_ci_lower = recall_ci_upper = recall
 
-    # KPI gate check
     kpi_recall_pass = recall >= KPI_RECALL_THRESHOLD
     kpi_precision_pass = precision >= KPI_PRECISION_THRESHOLD
     kpi_roi_pass = abs(roi_M - KPI_ROI_TARGET_M) <= KPI_ROI_TOLERANCE_M
     kpi_violations_pass = total_violations == 0 or len(normals) == 0
-    kpi_pass = all([kpi_recall_pass, kpi_precision_pass, kpi_roi_pass, kpi_violations_pass])
+    kpi_pass = all(
+        [kpi_recall_pass, kpi_precision_pass, kpi_roi_pass, kpi_violations_pass]
+    )
 
     return {
         "n_scenarios": n_scenarios,
@@ -433,7 +419,6 @@ def run_proof(seed: int = 42424242) -> Dict[str, Any]:
     gates: Dict[str, bool] = {}
     failed: List[str] = []
 
-    # Signal A - Tesla steering torque (primary validation)
     sample_rate_a = 1000.0
     signal_a = _make_signal(
         n=1000,
@@ -461,37 +446,22 @@ def run_proof(seed: int = 42424242) -> Dict[str, Any]:
     savings_m_a = float(out_a["savings_M"])
     trace_a = str(out_a["trace"])
 
-    # Reconstruction from fitted parameters
     A_a, f_a, phi_a, c_a = qed._fit_dominant_sine(signal_a, sample_rate_a)
     t_a = np.arange(signal_a.size) / sample_rate_a
     recon_a = A_a * np.sin(2.0 * np.pi * f_a * t_a + phi_a) + c_a
     nrmse_a = _normalized_rms_error(signal_a, recon_a)
     events_a = _count_events(signal_a, threshold=10.0)
 
-    # G1 - Compression ratio band (Signal A)
     gates["G1_ratio"] = 57.0 <= ratio_a <= 63.0
-
-    # G2 - Shannon information band (Signal A)
     gates["G2_entropy"] = 7150.0 <= H_bits_a <= 7250.0
-
-    # G3a - Safety recall with events (Signal A)
     gates["G3_recall_with_events"] = (events_a >= 50) and (recall_a >= 0.9985)
-
-    # G4 - ROI band (Signal A)
     gates["G4_roi"] = (abs(ratio_a - 60.0) < 1.0) and (37.8 <= savings_m_a <= 38.2)
-
-    # G6 - Reconstruction fidelity (Signal A)
     gates["G6_reconstruction"] = nrmse_a <= 0.05
-
-    # G7 - Determinism (Signal A)
     gates["G7_determinism"] = _deterministic_check(
         signal_a, sample_rate_hz=sample_rate_a
     )
-
-    # G8 - Latency (Signal A, in milliseconds)
     gates["G8_latency_ms"] = latency_a_ms <= 50.0
 
-    # Signal B - Boring vibration (bound should pass)
     sample_rate_b = 2048.0
     signal_b = _make_signal(
         n=1024,
@@ -514,7 +484,6 @@ def run_proof(seed: int = 42424242) -> Dict[str, Any]:
     except ValueError:
         gates["G5_bound_pass"] = False
 
-    # Signal C - Neuralink style low amplitude (no events)
     sample_rate_c = 10_000.0
     signal_c = _make_signal(
         n=1000,
@@ -536,7 +505,6 @@ def run_proof(seed: int = 42424242) -> Dict[str, Any]:
     events_c = _count_events(signal_c, threshold=10.0)
     gates["G3_recall_no_events"] = (events_c == 0) and (recall_c == 1.0)
 
-    # Signal D - SpaceX thrust oscillation (bound should fail)
     sample_rate_d = 1000.0
     signal_d = _make_signal(
         n=1000,
@@ -559,7 +527,6 @@ def run_proof(seed: int = 42424242) -> Dict[str, Any]:
     except ValueError as exc:
         gates["G5_bound_fail"] = "amplitude" in str(exc).lower()
 
-    # Evaluate gates
     for name, ok in gates.items():
         if not ok:
             failed.append(name)
@@ -598,9 +565,8 @@ def generate_edge_lab_sample(
     path = Path(output_path)
 
     with path.open("w") as f:
-        # Generate anomaly scenarios (high amplitude, near threshold)
         for i in tqdm(range(n_anomalies), desc="Generating anomalies"):
-            amplitude = rng.uniform(11.0, 14.5)  # Near but below bound
+            amplitude = rng.uniform(11.0, 14.5)
             frequency = rng.uniform(20.0, 100.0)
             noise = rng.uniform(0.05, 0.2)
 
@@ -621,9 +587,8 @@ def generate_edge_lab_sample(
             }
             f.write(json.dumps(record) + "\n")
 
-        # Generate normal scenarios (low amplitude, safe margin)
         for i in tqdm(range(n_normals), desc="Generating normals"):
-            amplitude = rng.uniform(2.0, 8.0)  # Well below threshold
+            amplitude = rng.uniform(2.0, 8.0)
             frequency = rng.uniform(20.0, 100.0)
             noise = rng.uniform(0.01, 0.1)
 
@@ -665,7 +630,6 @@ Examples:
     )
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
-    # Gates subcommand (legacy v5)
     gates_parser = subparsers.add_parser(
         "gates",
         help="Run legacy v5 gate checks with synthetic signals",
@@ -682,7 +646,6 @@ Examples:
         help="Output results as JSON",
     )
 
-    # Replay subcommand
     replay_parser = subparsers.add_parser(
         "replay",
         help="Replay scenarios from JSONL through qed.py",
@@ -709,7 +672,6 @@ Examples:
         help="Output JSON file for results",
     )
 
-    # Sympy suite subcommand
     suite_parser = subparsers.add_parser(
         "sympy_suite",
         help="Run sympy constraint suite for a hook",
@@ -725,7 +687,6 @@ Examples:
         help="Include all violations in output",
     )
 
-    # Generate sample data subcommand
     generate_parser = subparsers.add_parser(
         "generate",
         help="Generate edge_lab_sample.jsonl test data",
@@ -755,7 +716,6 @@ Examples:
         help="Random seed",
     )
 
-    # Summarize subcommand (reads replay output)
     summarize_parser = subparsers.add_parser(
         "summarize",
         help="Summarize replay results to KPI metrics",
@@ -815,7 +775,9 @@ Examples:
         print(json.dumps(result, indent=2))
 
         if result["n_violations"] > 0 and not args.verbose:
-            print(f"\nNote: {result['n_violations']} violations found. Use --verbose for details.")
+            print(
+                f"\nNote: {result['n_violations']} violations found. Use --verbose for details."
+            )
 
     elif args.command == "generate":
         generate_edge_lab_sample(
@@ -829,7 +791,7 @@ Examples:
         with open(args.results_json, "r") as f:
             data = json.load(f)
 
-        results = data.get("results", data)  # Handle both formats
+        results = data.get("results", data)
         summary = summarize(results)
         print(json.dumps(summary, indent=2))
 
