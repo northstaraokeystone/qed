@@ -8,6 +8,8 @@ Exposes CLI: 'demo' for synthetic signals and 'from-jsonl' for real telemetry wi
 
 from typing import Any, Dict, List, Optional
 
+from shared_anomalies import get_patterns_for_hook
+
 # -----------------------------------------------------------------------------
 # Hook metadata for QED v6 edge lab integration
 # -----------------------------------------------------------------------------
@@ -723,6 +725,18 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def get_cross_domain_config() -> Dict[str, Any]:
+    """
+    Return cross-domain integration configuration for xAI.
+
+    xAI has no cross-domain mappings (eval metrics are unique).
+    """
+    return {
+        "exports": {},
+        "accepts": {},
+    }
+
+
 def get_edge_lab_scenarios() -> List[Dict[str, Any]]:
     """
     Return edge lab test scenarios for xAI LLM telemetry.
@@ -732,41 +746,69 @@ def get_edge_lab_scenarios() -> List[Dict[str, Any]]:
         - type: scenario type (spike, step, drift, normal)
         - expected_loss: expected loss threshold (>0.1 for high-loss scenarios)
         - signal: list of float values representing the test signal
+        - pattern_id: optional pattern ID from shared_anomalies (None for legacy)
 
-    Returns 5 scenarios including high-loss edge cases for ROI validation.
+    Returns hand-crafted scenarios plus any patterns from shared_anomalies.
+    No cross-domain patterns (eval metrics are unique).
     """
-    return [
+    # Hand-crafted legacy scenarios (pattern_id=None)
+    legacy_scenarios = [
         {
             "id": "logit_spike",
             "type": "spike",
             "expected_loss": 0.18,
             "signal": [1e7] * 1000,  # Logit spike exceeds 1e6 threshold
+            "pattern_id": None,
         },
         {
             "id": "recall_drop",
             "type": "step",
             "expected_loss": 0.16,
             "signal": [0.99] * 500 + [0.90] * 500,  # Recall drops below 0.95
+            "pattern_id": None,
         },
         {
             "id": "entropy_squeeze",
             "type": "drift",
             "expected_loss": 0.13,
             "signal": [float(5.0 - i * 0.004) for i in range(1000)],  # Entropy squeeze
+            "pattern_id": None,
         },
         {
             "id": "kv_phase_drift",
             "type": "drift",
             "expected_loss": 0.11,
             "signal": [float(0.32 + i * 0.0005) for i in range(1000)],  # Phase density drift
+            "pattern_id": None,
         },
         {
             "id": "inference_normal",
             "type": "normal",
             "expected_loss": 0.04,
             "signal": [5.0] * 1000,  # Nominal inference metrics
+            "pattern_id": None,
         },
     ]
+
+    # Query shared_anomalies for patterns where "xai" in hooks
+    try:
+        patterns = get_patterns_for_hook("xai")
+    except Exception:
+        patterns = []
+
+    # Convert patterns to scenario format
+    pattern_scenarios = []
+    for p in patterns:
+        scenario = {
+            "id": f"pattern_{p.pattern_id}",
+            "type": p.failure_mode,
+            "expected_loss": 1.0 - p.validation_recall if p.validation_recall > 0 else 0.1,
+            "signal": p.params.get("signal", [0.0] * 1000),
+            "pattern_id": p.pattern_id,
+        }
+        pattern_scenarios.append(scenario)
+
+    return legacy_scenarios + pattern_scenarios
 
 
 def main(argv: Optional[List[str]] = None) -> None:

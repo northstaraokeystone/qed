@@ -18,6 +18,7 @@ from typing import Any, Dict, List
 import numpy as np
 
 import qed
+from shared_anomalies import get_patterns_for_hook
 
 # -----------------------------------------------------------------------------
 # Hook metadata for QED v6 edge lab integration
@@ -218,6 +219,23 @@ def _read_csv_column(path: Path, column: str) -> np.ndarray:
     return np.asarray(values, dtype=np.float64)
 
 
+def get_cross_domain_config() -> Dict[str, Any]:
+    """
+    Return cross-domain integration configuration for Starlink.
+
+    Starlink is a TARGET for:
+      - comms from Tesla
+
+    Starlink exports nothing.
+    """
+    return {
+        "exports": {},
+        "accepts": {
+            "comms": "tesla",
+        },
+    }
+
+
 def get_edge_lab_scenarios() -> List[Dict[str, Any]]:
     """
     Return edge lab test scenarios for Starlink telemetry.
@@ -227,41 +245,80 @@ def get_edge_lab_scenarios() -> List[Dict[str, Any]]:
         - type: scenario type (spike, step, drift, normal)
         - expected_loss: expected loss threshold (>0.1 for high-loss scenarios)
         - signal: list of float values representing the test signal
+        - pattern_id: optional pattern ID from shared_anomalies (None for legacy)
 
-    Returns 5 scenarios including high-loss edge cases for ROI validation.
+    Returns hand-crafted scenarios plus any patterns from shared_anomalies,
+    including cross-domain patterns from Tesla comms.
     """
-    return [
+    # Hand-crafted legacy scenarios (pattern_id=None)
+    legacy_scenarios = [
         {
             "id": "link_drop_burst",
             "type": "spike",
             "expected_loss": 0.16,
             "signal": [0.15] * 1000,  # Exceeds 0.1 drop rate threshold
+            "pattern_id": None,
         },
         {
             "id": "beam_fail",
             "type": "step",
             "expected_loss": 0.18,
             "signal": [27.0] * 500 + [35.0] * 500,  # Beam power spike
+            "pattern_id": None,
         },
         {
             "id": "orbital_drift_exceed",
             "type": "drift",
             "expected_loss": 0.14,
             "signal": [float(i * 0.6) for i in range(1000)],  # Drift to 600m
+            "pattern_id": None,
         },
         {
             "id": "thermal_runaway",
             "type": "spike",
             "expected_loss": 0.17,
             "signal": [50.0] * 1000,  # Exceeds 45 degC threshold
+            "pattern_id": None,
         },
         {
             "id": "constellation_normal",
             "type": "normal",
             "expected_loss": 0.03,
             "signal": [0.02] * 1000,  # Nominal link operation
+            "pattern_id": None,
         },
     ]
+
+    # Query shared_anomalies for patterns where "starlink" in hooks
+    try:
+        patterns = get_patterns_for_hook("starlink")
+    except Exception:
+        patterns = []
+
+    # Also include cross-domain patterns from Tesla comms
+    cross_domain_config = get_cross_domain_config()
+    for domain, source in cross_domain_config.get("accepts", {}).items():
+        try:
+            source_patterns = get_patterns_for_hook(source)
+            for p in source_patterns:
+                if p.physics_domain == domain and "starlink" in p.cross_domain_targets:
+                    patterns.append(p)
+        except Exception:
+            pass
+
+    # Convert patterns to scenario format
+    pattern_scenarios = []
+    for p in patterns:
+        scenario = {
+            "id": f"pattern_{p.pattern_id}",
+            "type": p.failure_mode,
+            "expected_loss": 1.0 - p.validation_recall if p.validation_recall > 0 else 0.1,
+            "signal": p.params.get("signal", [0.0] * 1000),
+            "pattern_id": p.pattern_id,
+        }
+        pattern_scenarios.append(scenario)
+
+    return legacy_scenarios + pattern_scenarios
 
 
 def main() -> None:

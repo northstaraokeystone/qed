@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
+from shared_anomalies import get_patterns_for_hook
+
 # -----------------------------------------------------------------------------
 # Hook metadata for QED v6 edge lab integration
 # -----------------------------------------------------------------------------
@@ -214,6 +216,18 @@ def _run_qed_scaled(
     }
 
 
+def get_cross_domain_config() -> Dict[str, Any]:
+    """
+    Return cross-domain integration configuration for Boring Company.
+
+    Boring has no cross-domain mappings (tunnel telemetry is unique).
+    """
+    return {
+        "exports": {},
+        "accepts": {},
+    }
+
+
 def get_edge_lab_scenarios() -> List[Dict[str, Any]]:
     """
     Return edge lab test scenarios for Boring Company TBM telemetry.
@@ -223,41 +237,69 @@ def get_edge_lab_scenarios() -> List[Dict[str, Any]]:
         - type: scenario type (spike, step, drift, normal)
         - expected_loss: expected loss threshold (>0.1 for high-loss scenarios)
         - signal: list of float values representing the test signal
+        - pattern_id: optional pattern ID from shared_anomalies (None for legacy)
 
-    Returns 5 scenarios including high-loss edge cases for ROI validation.
+    Returns hand-crafted scenarios plus any patterns from shared_anomalies.
+    No cross-domain patterns (tunnel telemetry is unique).
     """
-    return [
+    # Hand-crafted legacy scenarios (pattern_id=None)
+    legacy_scenarios = [
         {
             "id": "pressure_surge",
             "type": "spike",
             "expected_loss": 0.17,
             "signal": [320.0] * 1000,  # Exceeds 315 bar threshold
+            "pattern_id": None,
         },
         {
             "id": "vibration_exceed",
             "type": "spike",
             "expected_loss": 0.15,
             "signal": [3.8] * 1000,  # Exceeds 3.5g threshold
+            "pattern_id": None,
         },
         {
             "id": "torque_ramp",
             "type": "drift",
             "expected_loss": 0.12,
             "signal": [float(i * 5) for i in range(1000)],  # Gradual torque increase
+            "pattern_id": None,
         },
         {
             "id": "cutterhead_step",
             "type": "step",
             "expected_loss": 0.14,
             "signal": [200.0] * 500 + [400.0] * 500,  # Sudden load change
+            "pattern_id": None,
         },
         {
             "id": "tunnel_normal",
             "type": "normal",
             "expected_loss": 0.03,
             "signal": [250.0] * 1000,  # Nominal boring operation
+            "pattern_id": None,
         },
     ]
+
+    # Query shared_anomalies for patterns where "boring" in hooks
+    try:
+        patterns = get_patterns_for_hook("boring")
+    except Exception:
+        patterns = []
+
+    # Convert patterns to scenario format
+    pattern_scenarios = []
+    for p in patterns:
+        scenario = {
+            "id": f"pattern_{p.pattern_id}",
+            "type": p.failure_mode,
+            "expected_loss": 1.0 - p.validation_recall if p.validation_recall > 0 else 0.1,
+            "signal": p.params.get("signal", [0.0] * 1000),
+            "pattern_id": p.pattern_id,
+        }
+        pattern_scenarios.append(scenario)
+
+    return legacy_scenarios + pattern_scenarios
 
 
 def main() -> None:

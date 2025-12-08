@@ -8,6 +8,8 @@ CLI with "demo" for synthetic signals and "from-csv" for windowed processing of 
 
 from typing import Any, Dict, List
 
+from shared_anomalies import get_patterns_for_hook
+
 # -----------------------------------------------------------------------------
 # Hook metadata for QED v6 edge lab integration
 # -----------------------------------------------------------------------------
@@ -199,6 +201,25 @@ def _read_csv_column(path: Path, column: str) -> np.ndarray:
     return np.asarray(values, dtype=np.float64)
 
 
+def get_cross_domain_config() -> Dict[str, Any]:
+    """
+    Return cross-domain integration configuration for Tesla.
+
+    Tesla is a SOURCE for:
+      - battery_thermal → exports to SpaceX
+      - comms → exports to Starlink
+
+    Tesla accepts nothing (pure source).
+    """
+    return {
+        "exports": {
+            "battery_thermal": ["spacex"],
+            "comms": ["starlink"],
+        },
+        "accepts": {},
+    }
+
+
 def get_edge_lab_scenarios() -> List[Dict[str, Any]]:
     """
     Return edge lab test scenarios for Tesla telemetry.
@@ -208,41 +229,68 @@ def get_edge_lab_scenarios() -> List[Dict[str, Any]]:
         - type: scenario type (spike, drift, step, normal)
         - expected_loss: expected loss threshold (>0.1 for high-loss scenarios)
         - signal: list of float values representing the test signal
+        - pattern_id: optional pattern ID from shared_anomalies (None for legacy)
 
-    Returns 5 scenarios including high-loss edge cases for ROI validation.
+    Returns hand-crafted scenarios plus any patterns from shared_anomalies.
     """
-    return [
+    # Hand-crafted legacy scenarios (pattern_id=None)
+    legacy_scenarios = [
         {
             "id": "torque_spike",
             "type": "spike",
             "expected_loss": 0.15,
             "signal": [14.8] * 1000,  # Above 14.7g safety threshold
+            "pattern_id": None,
         },
         {
             "id": "speed_drift",
             "type": "drift",
             "expected_loss": 0.12,
             "signal": list(range(1000)),  # Gradual drift pattern
+            "pattern_id": None,
         },
         {
             "id": "brake_anomaly",
             "type": "step",
             "expected_loss": 0.18,
             "signal": [0.0] * 500 + [20.0] * 500,  # Sudden step change
+            "pattern_id": None,
         },
         {
             "id": "accel_exceed",
             "type": "spike",
             "expected_loss": 0.20,
             "signal": [15.0] * 1000,  # Exceeds 14.7g bound
+            "pattern_id": None,
         },
         {
             "id": "normal_drive",
             "type": "normal",
             "expected_loss": 0.05,
             "signal": [10.0] * 1000,  # Nominal operation
+            "pattern_id": None,
         },
     ]
+
+    # Query shared_anomalies for patterns where "tesla" in hooks
+    try:
+        patterns = get_patterns_for_hook("tesla")
+    except Exception:
+        patterns = []
+
+    # Convert patterns to scenario format
+    pattern_scenarios = []
+    for p in patterns:
+        scenario = {
+            "id": f"pattern_{p.pattern_id}",
+            "type": p.failure_mode,
+            "expected_loss": 1.0 - p.validation_recall if p.validation_recall > 0 else 0.1,
+            "signal": p.params.get("signal", [0.0] * 1000),
+            "pattern_id": p.pattern_id,
+        }
+        pattern_scenarios.append(scenario)
+
+    return legacy_scenarios + pattern_scenarios
 
 
 def main() -> None:
