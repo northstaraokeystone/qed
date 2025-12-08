@@ -321,6 +321,38 @@ def print_table(aggregated: Dict[str, Dict[str, Dict[str, Any]]]) -> None:
                   f"{m['constraint_violations']:>11}")
 
 
+def generate_mesh_view(
+    manifest_path: str,
+    receipts_path: str,
+    sample_n: int = 100,
+) -> Dict[str, Any]:
+    """
+    Generate mesh view from manifest and receipts.
+
+    Args:
+        manifest_path: Path to qed_run_manifest.json.
+        receipts_path: Path to receipts.jsonl.
+        sample_n: Number of receipts to sample (default: 100).
+
+    Returns:
+        Dict with keys: _meta (run metadata), companies (per-company/hook metrics).
+    """
+    manifest = load_manifest(manifest_path)
+    receipts = sample_receipts(receipts_path, sample_n)
+    metrics = compute_metrics(receipts)
+
+    output: Dict[str, Any] = {
+        "_meta": {
+            "run_id": manifest.get("run_id", "unknown"),
+            "fleet_size": manifest.get("fleet_size", 0),
+            "total_windows": manifest.get("total_windows", manifest.get("windows", 0)),
+        },
+        "companies": metrics,
+    }
+
+    return output
+
+
 def main(
     manifest_path: str,
     receipts_file: str,
