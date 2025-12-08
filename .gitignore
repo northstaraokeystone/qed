@@ -1,7 +1,8 @@
-.venv/
+.venv311/
 __pycache__/
 *.pyc
 .env
 .vscode/
 .idea/
 .DS_Store
+CLAUDEME.md
