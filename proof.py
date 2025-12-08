@@ -252,8 +252,14 @@ def sympy_suite(
 
     for constraint in tqdm(constraints, desc=f"Checking constraints for {hook}"):
         constraint_id = constraint.get("id", "unknown")
+        constraint_type = constraint.get("type", "amplitude_bound")
         bound = constraint.get("bound", float("inf"))
         description = constraint.get("description", "")
+
+        # Only test amplitude_bound constraints with amplitude values
+        # (ratio_min, savings_min, mse_max have different semantics)
+        if constraint_type != "amplitude_bound":
+            continue
 
         for A in test_amplitudes:
             total_tests += 1
