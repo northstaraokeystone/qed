@@ -45,7 +45,6 @@ from decision_packet import DecisionPacket, PatternSummary, PacketMetrics
 # Backward compatibility: re-export all mesh_view_v2 public functions
 from mesh_view_v2 import (
     load_manifest,
-    build_company_table,
     sample_receipts,
     extract_hook_from_receipt,
     parse_company_from_hook,
