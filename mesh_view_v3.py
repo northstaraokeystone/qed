@@ -34,16 +34,16 @@ import hashlib
 import json
 import math
 from collections import defaultdict
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 # Import from sibling modules
-from decision_packet import DecisionPacket, PatternSummary, PacketMetrics
+from decision_packet import DecisionPacket
 
 # Backward compatibility: re-export all mesh_view_v2 public functions
-from mesh_view_v2 import (
+from mesh_view_v2 import (  # noqa: F401
     load_manifest,
     sample_receipts,
     extract_hook_from_receipt,

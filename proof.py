@@ -66,7 +66,7 @@ try:
     from rich.console import Console
     from rich.table import Table
     from rich.panel import Panel
-    from rich.progress import Progress, SpinnerColumn, TextColumn
+    pass  # rich.progress imports removed (unused)
     from rich import box
     RICH_AVAILABLE = True
 except ImportError:
@@ -840,7 +840,7 @@ def build_packet_cmd(deployment_id: str, manifest: str, receipts: str, output: s
         )
 
         # Save packet
-        packet_id = truthlink.save(packet, output_dir=save)
+        truthlink.save(packet, output_dir=save)
         timestamp = datetime.now().strftime("%Y%m%d")
         save_path = f"{save}{deployment_id}_{timestamp}.jsonl"
 
@@ -1062,7 +1062,6 @@ def merge_configs_cmd(parent: str, child: str, save: Optional[str], auto_repair:
                     # Pattern changes
                     if result.explanation.patterns_kept or result.explanation.patterns_removed:
                         kept = len(result.explanation.patterns_kept)
-                        removed = len(result.explanation.patterns_removed)
                         lines.append(f"[bold]patterns:[/bold]      {kept} (intersection) [green]✓[/green]")
 
                     # Regulatory flags
@@ -1478,7 +1477,7 @@ def pattern_report_cmd(patterns_path: str, sort_by: str, exploit_only: bool, out
 def clarity_audit_cmd(receipts_path: str, output_corpus: Optional[str], output_receipt: str):
     """Process receipts through ClarityClean adapter."""
     result = clarity_audit(receipts_path, output_corpus, output_receipt)
-    click.echo(f"ClarityClean audit complete:")
+    click.echo("ClarityClean audit complete:")
     click.echo(f"  token_count: {result['token_count']}")
     click.echo(f"  anomaly_density: {result['anomaly_density']:.4f}")
     click.echo(f"  noise_ratio: {result['noise_ratio']:.4f}")
