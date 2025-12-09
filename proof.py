@@ -47,14 +47,14 @@ except ImportError:
         return iterable
 
 
-import qed
-import sympy_constraints
-
 # v7 imports
 from scipy.stats import beta
+
+import qed
+import sympy_constraints
+from clarity_clean_adapter import process_receipts
 from edge_lab_v2 import run_pattern_sims
 from shared_anomalies import load_library
-from clarity_clean_adapter import process_receipts
 
 try:
     from rich.console import Console
