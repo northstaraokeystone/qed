@@ -14,6 +14,13 @@ v7 subcommands:
   - pattern-report: Display pattern library with sorting/filtering
   - clarity-audit: Process receipts through ClarityClean adapter
 
+v8 subcommands:
+  - build-packet: Build DecisionPacket from manifest/receipts
+  - validate-config: Validate QEDConfig with auto-repair
+  - merge-configs: Merge parent/child configs with safety enforcement
+  - compare-packets: Compare two DecisionPackets
+  - fleet-view: Display fleet topology and health
+
 What to prove:
   - Recall >= 99.67% (95% CI on 900 anomalies)
   - Precision > 95%
@@ -1089,6 +1096,51 @@ v7 Commands:
         help="Path to write ClarityCleanReceipt JSONL (default: data/clarity_receipts.jsonl)",
     )
 
+    # --- v8 Subcommands (stubs) ---
+
+    build_packet_parser = subparsers.add_parser(
+        "build-packet",
+        help="Build DecisionPacket from manifest/receipts",
+    )
+    build_packet_parser.add_argument(
+        "--deployment-id", "-d", type=str, required=True, help="Deployment ID"
+    )
+
+    validate_config_parser = subparsers.add_parser(
+        "validate-config",
+        help="Validate QEDConfig with auto-repair",
+    )
+    validate_config_parser.add_argument(
+        "config_path", type=str, help="Path to config file"
+    )
+
+    merge_configs_parser = subparsers.add_parser(
+        "merge-configs",
+        help="Merge parent/child configs with safety enforcement",
+    )
+    merge_configs_parser.add_argument(
+        "--parent", "-p", type=str, required=True, help="Parent config path"
+    )
+    merge_configs_parser.add_argument(
+        "--child", "-c", type=str, required=True, help="Child config path"
+    )
+
+    compare_packets_parser = subparsers.add_parser(
+        "compare-packets",
+        help="Compare two DecisionPackets",
+    )
+    compare_packets_parser.add_argument(
+        "--old", "-a", type=str, required=True, help="Old packet path"
+    )
+    compare_packets_parser.add_argument(
+        "--new", "-b", type=str, required=True, help="New packet path"
+    )
+
+    subparsers.add_parser(
+        "fleet-view",
+        help="Display fleet topology and health",
+    )
+
     args = parser.parse_args()
 
     if args.command == "gates":
@@ -1215,6 +1267,23 @@ v7 Commands:
         print(f"Receipt written to {result['output_receipt']}")
         if result["output_corpus"]:
             print(f"Corpus written to {result['output_corpus']}")
+
+    # --- v8 Command Handlers (stubs) ---
+
+    elif args.command == "build-packet":
+        print(f"build-packet for {args.deployment_id} - not yet implemented")
+
+    elif args.command == "validate-config":
+        print(f"validate-config {args.config_path} - not yet implemented")
+
+    elif args.command == "merge-configs":
+        print(f"merge-configs {args.parent} + {args.child} - not yet implemented")
+
+    elif args.command == "compare-packets":
+        print(f"compare-packets {args.old} vs {args.new} - not yet implemented")
+
+    elif args.command == "fleet-view":
+        print("fleet-view - not yet implemented")
 
     else:
         parser.print_help()
