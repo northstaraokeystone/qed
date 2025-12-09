@@ -1,10 +1,111 @@
+import hashlib
 import json
+import re
+import secrets
+import sys
+import time
 import uuid
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
-from typing import IO, Any, Dict, List, Optional
+from typing import IO, Any, Dict, Iterator, List, Optional, Union
 
 import numpy as np
+
+
+__all__ = [
+    "QEDReceipt",
+    "RunContext",
+    "RunSummary",
+    "RunResult",
+    "qed",
+    "run",
+    "check_constraints",
+    "write_receipt_jsonl",
+    "detect_config_drift",
+]
+
+
+# =============================================================================
+# v8: RunContext - Lightweight context for tracking deployment runs
+# =============================================================================
+
+
+@dataclass(frozen=True)
+class RunContext:
+    """
+    Lightweight context for tracking QED runs.
+
+    Links receipts to DecisionPackets via deployment_id, enabling clean
+    handoff to TruthLink for manifest generation.
+    """
+
+    deployment_id: Optional[str] = None
+    batch_id: Optional[str] = None
+    config_hash: Optional[str] = None
+    caller: str = "unknown"
+
+    @classmethod
+    def create(
+        cls,
+        deployment_id: Optional[str] = None,
+        config: Optional[Dict[str, Any]] = None,
+        caller: str = "unknown",
+    ) -> "RunContext":
+        """
+        Factory method to create RunContext with auto-generated batch_id.
+
+        Args:
+            deployment_id: Optional deployment identifier for linking to DecisionPackets
+            config: Optional config dict - if provided, hash is computed for drift detection
+            caller: Who invoked this run ("cli", "pipeline", "test", etc.)
+
+        Returns:
+            RunContext with auto-generated batch_id and optional config_hash
+        """
+        # Auto-generate batch_id: timestamp + random suffix
+        ts = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+        suffix = secrets.token_hex(4)
+        batch_id = f"{ts}_{suffix}"
+
+        # Compute config hash if config provided
+        config_hash = None
+        if config is not None:
+            config_json = json.dumps(config, sort_keys=True, separators=(",", ":"))
+            config_hash = hashlib.sha3_256(config_json.encode()).hexdigest()[:16]
+
+        return cls(
+            deployment_id=deployment_id,
+            batch_id=batch_id,
+            config_hash=config_hash,
+            caller=caller,
+        )
+
+
+# =============================================================================
+# v8: RunSummary - Aggregated statistics for TruthLink handoff
+# =============================================================================
+
+
+@dataclass(frozen=True)
+class RunSummary:
+    """
+    Aggregated run statistics for TruthLink manifest generation.
+
+    Contains exactly what TruthLink needs, eliminating redundant computation.
+    """
+
+    deployment_id: Optional[str]
+    batch_id: str
+    hook: Optional[str]
+    window_count: int
+    windows_passed: int
+    windows_failed: int
+    avg_compression: float
+    total_estimated_savings: float
+    slo_breach_count: int
+    slo_breach_rate: float
+    duration_ms: int
+    run_hash: str  # SHA3 of all receipt hashes
 
 
 @dataclass(frozen=True)
@@ -22,6 +123,168 @@ class QEDReceipt:
     violations: List[Dict[str, Any]]
     trace: str
     pattern_id: Optional[str] = None
+    # v8: deployment tracking fields
+    deployment_id: Optional[str] = None
+    batch_id: Optional[str] = None
+    config_hash: Optional[str] = None
+    config_drift_detected: bool = False
+
+
+# =============================================================================
+# v8: RunResult - List-like wrapper for backward compatibility
+# =============================================================================
+
+
+@dataclass
+class RunResult:
+    """
+    Result container for run() that maintains backward compatibility.
+
+    Supports iteration, indexing, and len() so existing code treating
+    the result as a list continues to work unchanged.
+    """
+
+    receipts: List[QEDReceipt]
+    summary: RunSummary
+    context: RunContext
+
+    def __iter__(self) -> Iterator[QEDReceipt]:
+        """Iterate over receipts for backward compatibility."""
+        return iter(self.receipts)
+
+    def __len__(self) -> int:
+        """Return receipt count for backward compatibility."""
+        return len(self.receipts)
+
+    def __getitem__(self, index: int) -> QEDReceipt:
+        """Index into receipts for backward compatibility."""
+        return self.receipts[index]
+
+    def __bool__(self) -> bool:
+        """Truth value based on receipt count."""
+        return len(self.receipts) > 0
+
+
+# =============================================================================
+# v8: Context validation and drift detection
+# =============================================================================
+
+
+def _validate_context(context: RunContext) -> List[str]:
+    """
+    Validate RunContext fields and return list of warnings.
+
+    Does not block execution - only emits warnings for invalid values.
+
+    Args:
+        context: RunContext to validate
+
+    Returns:
+        List of warning messages (empty if all valid)
+    """
+    warnings = []
+
+    if context.deployment_id is not None:
+        # Check deployment_id contains only alphanumeric, dash, underscore
+        if not re.match(r"^[a-zA-Z0-9_-]*$", context.deployment_id):
+            warnings.append(
+                f"deployment_id contains invalid characters: {context.deployment_id!r}"
+            )
+
+        # Check deployment_id length
+        if len(context.deployment_id) >= 128:
+            warnings.append(
+                f"deployment_id exceeds 128 chars: {len(context.deployment_id)}"
+            )
+
+    if context.batch_id is not None:
+        # Validate batch_id format (timestamp_suffix)
+        if not re.match(r"^[0-9]{14}_[a-f0-9]{8}$", context.batch_id):
+            warnings.append(f"batch_id has non-standard format: {context.batch_id!r}")
+
+    return warnings
+
+
+def detect_config_drift(context: RunContext, current_config_hash: str) -> bool:
+    """
+    Detect if config has changed between runs for same deployment.
+
+    Args:
+        context: RunContext with optional stored config_hash
+        current_config_hash: Hash of current configuration
+
+    Returns:
+        True if drift detected, False otherwise
+    """
+    if context.config_hash is None:
+        return False
+
+    if context.config_hash != current_config_hash:
+        print(
+            f"[QED WARNING] Config drift detected: "
+            f"context={context.config_hash} != current={current_config_hash}",
+            file=sys.stderr,
+        )
+        return True
+
+    return False
+
+
+def _build_run_summary(
+    receipts: List[QEDReceipt],
+    context: RunContext,
+    hook: Optional[str],
+    duration_seconds: float,
+) -> RunSummary:
+    """
+    Build RunSummary from processed receipts.
+
+    Args:
+        receipts: List of QEDReceipts from this run
+        context: RunContext for this run
+        hook: Hook name used
+        duration_seconds: Total run duration in seconds
+
+    Returns:
+        RunSummary with aggregated statistics
+    """
+    window_count = len(receipts)
+    windows_passed = sum(1 for r in receipts if r.verified is True)
+    windows_failed = sum(1 for r in receipts if r.verified is False)
+
+    # Compute averages and totals
+    avg_compression = (
+        sum(r.ratio for r in receipts) / window_count if window_count > 0 else 0.0
+    )
+    total_estimated_savings = sum(r.savings_M for r in receipts)
+
+    # SLO breach detection (verified=False or has violations)
+    slo_breaches = sum(
+        1 for r in receipts if r.verified is False or len(r.violations) > 0
+    )
+    slo_breach_rate = slo_breaches / window_count if window_count > 0 else 0.0
+
+    # Compute run_hash (SHA3 of all receipt data)
+    hasher = hashlib.sha3_256()
+    for receipt in receipts:
+        receipt_json = json.dumps(asdict(receipt), sort_keys=True, separators=(",", ":"))
+        hasher.update(receipt_json.encode())
+    run_hash = hasher.hexdigest()[:32]
+
+    return RunSummary(
+        deployment_id=context.deployment_id,
+        batch_id=context.batch_id or "",
+        hook=hook,
+        window_count=window_count,
+        windows_passed=windows_passed,
+        windows_failed=windows_failed,
+        avg_compression=avg_compression,
+        total_estimated_savings=total_estimated_savings,
+        slo_breach_count=slo_breaches,
+        slo_breach_rate=slo_breach_rate,
+        duration_ms=int(duration_seconds * 1000),
+        run_hash=run_hash,
+    )
 
 
 def _generate_window_id(scenario: str, n_samples: int) -> str:
@@ -249,21 +512,92 @@ def qed(
 
 
 def run(
-    window: np.ndarray,
+    windows: Union[np.ndarray, List[np.ndarray]],
     hook: Optional[str] = None,
+    context: Optional[RunContext] = None,
+    deployment_id: Optional[str] = None,
     pattern_id: Optional[str] = None,
     **kwargs,
-) -> Dict[str, Any]:
+) -> RunResult:
     """
-    Simplified interface for qed() with edge_lab pattern tracking.
+    Process telemetry windows and return RunResult with receipts and summary.
+
+    v8 enhanced interface with deployment tracking for TruthLink handoff.
+    Maintains backward compatibility - can be iterated like a list.
 
     Args:
-        window: Telemetry signal array
+        windows: Single telemetry array or list of arrays to process
         hook: Optional hook name for constraint checking
+        context: Optional RunContext for deployment tracking
+        deployment_id: Optional deployment ID (convenience - wrapped in context internally)
         pattern_id: Optional SHA3 hash of anomaly pattern that triggered detection
         **kwargs: Additional arguments passed to qed()
 
     Returns:
-        QED analysis result dict with receipt
+        RunResult containing receipts, summary, and context.
+        RunResult is iterable and indexable for backward compatibility.
+
+    Example:
+        # New v8 style with context
+        ctx = RunContext.create(deployment_id="deploy-123", caller="pipeline")
+        result = run(windows, "my_hook", context=ctx)
+        print(result.summary.avg_compression)
+
+        # Backward compatible - treat as list
+        result = run(windows, "my_hook")
+        for receipt in result:
+            print(receipt.ratio)
     """
-    return qed(signal=window, hook_name=hook, pattern_id=pattern_id, **kwargs)
+    # Track timing
+    start_time = time.time()
+
+    # Backward compat: wrap deployment_id in context if needed
+    if context is None:
+        context = RunContext.create(deployment_id=deployment_id)
+    elif deployment_id and not context.deployment_id:
+        # deployment_id passed separately, inject into context
+        context = replace(context, deployment_id=deployment_id)
+
+    # Validate context and emit warnings
+    warnings = _validate_context(context)
+    for warning in warnings:
+        print(f"[QED WARNING] {warning}", file=sys.stderr)
+
+    # Normalize windows to list format
+    # Handle single window (backward compat) vs multiple windows
+    if isinstance(windows, np.ndarray):
+        # Check if it's a 2D array (multiple windows) or 1D (single window)
+        if windows.ndim == 1:
+            window_list = [windows]
+        elif windows.ndim == 2:
+            # 2D array: each row is a window
+            window_list = [windows[i] for i in range(windows.shape[0])]
+        else:
+            # 3D+ array: treat as single complex signal
+            window_list = [windows]
+    elif isinstance(windows, (list, tuple)):
+        window_list = list(windows)
+    else:
+        # Fallback: try to iterate
+        window_list = list(windows)
+
+    # Process each window
+    receipts: List[QEDReceipt] = []
+    for window in window_list:
+        result = qed(signal=window, hook_name=hook, pattern_id=pattern_id, **kwargs)
+        receipt = result["receipt"]
+
+        # Inject context fields into receipt
+        receipt = replace(
+            receipt,
+            deployment_id=context.deployment_id,
+            batch_id=context.batch_id,
+            config_hash=context.config_hash,
+        )
+        receipts.append(receipt)
+
+    # Build summary for TruthLink handoff
+    duration_seconds = time.time() - start_time
+    summary = _build_run_summary(receipts, context, hook, duration_seconds)
+
+    return RunResult(receipts=receipts, summary=summary, context=context)
