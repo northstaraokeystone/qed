@@ -228,6 +228,32 @@ def get_cross_domain_config() -> Dict[str, Any]:
     }
 
 
+def get_deployment_config() -> "DeploymentDefaults":
+    """Return deployment defaults for Boring Company hook."""
+    from hooks import DeploymentDefaults
+    return DeploymentDefaults(
+        hook="boring",
+        recall_floor=0.999,
+        max_fp_rate=0.005,
+        slo_latency_ms=500,
+        slo_breach_budget=0.005,
+        compression_target=10.0,
+        enabled_patterns=["PAT_TORQUE_*", "PAT_PRESSURE_*", "PAT_VIBRATION_*"],
+        regulatory_flags={"OSHA": True},
+    )
+
+
+def get_hardware_profile() -> "HardwareProfile":
+    """Return hardware profile for Boring Company hook."""
+    from hooks import HardwareProfile
+    return HardwareProfile(
+        platform="tunnel_plc",
+        compute_class="edge",
+        connectivity="fiber",
+        safety_critical=True,
+    )
+
+
 def get_edge_lab_scenarios() -> List[Dict[str, Any]]:
     """
     Return edge lab test scenarios for Boring Company TBM telemetry.

@@ -236,6 +236,32 @@ def get_cross_domain_config() -> Dict[str, Any]:
     }
 
 
+def get_deployment_config() -> "DeploymentDefaults":
+    """Return deployment defaults for Starlink hook."""
+    from hooks import DeploymentDefaults
+    return DeploymentDefaults(
+        hook="starlink",
+        recall_floor=0.999,
+        max_fp_rate=0.01,
+        slo_latency_ms=200,
+        slo_breach_budget=0.005,
+        compression_target=20.0,
+        enabled_patterns=["PAT_LINK_*", "PAT_ORBITAL_*", "PAT_THERMAL_*"],
+        regulatory_flags={"FCC": True},
+    )
+
+
+def get_hardware_profile() -> "HardwareProfile":
+    """Return hardware profile for Starlink hook."""
+    from hooks import HardwareProfile
+    return HardwareProfile(
+        platform="satellite",
+        compute_class="edge",
+        connectivity="satellite",
+        safety_critical=True,
+    )
+
+
 def get_edge_lab_scenarios() -> List[Dict[str, Any]]:
     """
     Return edge lab test scenarios for Starlink telemetry.

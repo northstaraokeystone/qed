@@ -737,6 +737,32 @@ def get_cross_domain_config() -> Dict[str, Any]:
     }
 
 
+def get_deployment_config() -> "DeploymentDefaults":
+    """Return deployment defaults for xAI hook."""
+    from hooks import DeploymentDefaults
+    return DeploymentDefaults(
+        hook="xai",
+        recall_floor=0.995,
+        max_fp_rate=0.02,
+        slo_latency_ms=1000,
+        slo_breach_budget=0.01,
+        compression_target=10.0,
+        enabled_patterns=["PAT_LOGIT_*", "PAT_KV_*", "PAT_ENTROPY_*"],
+        regulatory_flags={},
+    )
+
+
+def get_hardware_profile() -> "HardwareProfile":
+    """Return hardware profile for xAI hook."""
+    from hooks import HardwareProfile
+    return HardwareProfile(
+        platform="gpu_cluster",
+        compute_class="distributed",
+        connectivity="fiber",
+        safety_critical=False,
+    )
+
+
 def get_edge_lab_scenarios() -> List[Dict[str, Any]]:
     """
     Return edge lab test scenarios for xAI LLM telemetry.

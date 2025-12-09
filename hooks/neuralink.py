@@ -283,6 +283,32 @@ def get_cross_domain_config() -> Dict[str, Any]:
     }
 
 
+def get_deployment_config() -> "DeploymentDefaults":
+    """Return deployment defaults for Neuralink hook."""
+    from hooks import DeploymentDefaults
+    return DeploymentDefaults(
+        hook="neuralink",
+        recall_floor=0.99999,
+        max_fp_rate=0.0001,
+        slo_latency_ms=5,
+        slo_breach_budget=0.0001,
+        compression_target=10.0,
+        enabled_patterns=["PAT_NEURAL_*", "PAT_DECODER_*", "PAT_IMPLANT_*"],
+        regulatory_flags={"FDA": True, "HIPAA": True},
+    )
+
+
+def get_hardware_profile() -> "HardwareProfile":
+    """Return hardware profile for Neuralink hook."""
+    from hooks import HardwareProfile
+    return HardwareProfile(
+        platform="neural_implant",
+        compute_class="embedded",
+        connectivity="neural_link",
+        safety_critical=True,
+    )
+
+
 def get_edge_lab_scenarios() -> List[Dict[str, Any]]:
     """
     Return edge lab test scenarios for Neuralink neural telemetry.

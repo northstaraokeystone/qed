@@ -220,6 +220,32 @@ def get_cross_domain_config() -> Dict[str, Any]:
     }
 
 
+def get_deployment_config() -> "DeploymentDefaults":
+    """Return deployment defaults for Tesla hook."""
+    from hooks import DeploymentDefaults
+    return DeploymentDefaults(
+        hook="tesla",
+        recall_floor=0.9995,
+        max_fp_rate=0.005,
+        slo_latency_ms=50,
+        slo_breach_budget=0.001,
+        compression_target=10.0,
+        enabled_patterns=["PAT_CAN_*", "PAT_BATTERY_*", "PAT_THERMAL_*"],
+        regulatory_flags={"NHTSA": True, "ISO26262": True},
+    )
+
+
+def get_hardware_profile() -> "HardwareProfile":
+    """Return hardware profile for Tesla hook."""
+    from hooks import HardwareProfile
+    return HardwareProfile(
+        platform="vehicle_ecu",
+        compute_class="embedded",
+        connectivity="cellular",
+        safety_critical=True,
+    )
+
+
 def get_edge_lab_scenarios() -> List[Dict[str, Any]]:
     """
     Return edge lab test scenarios for Tesla telemetry.

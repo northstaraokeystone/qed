@@ -433,6 +433,32 @@ def get_cross_domain_config() -> Dict[str, Any]:
     }
 
 
+def get_deployment_config() -> "DeploymentDefaults":
+    """Return deployment defaults for SpaceX hook."""
+    from hooks import DeploymentDefaults
+    return DeploymentDefaults(
+        hook="spacex",
+        recall_floor=0.9999,
+        max_fp_rate=0.001,
+        slo_latency_ms=10,
+        slo_breach_budget=0.0001,
+        compression_target=10.0,
+        enabled_patterns=["PAT_THRUST_*", "PAT_CHAMBER_*", "PAT_THERMAL_*"],
+        regulatory_flags={"FAA": True},
+    )
+
+
+def get_hardware_profile() -> "HardwareProfile":
+    """Return hardware profile for SpaceX hook."""
+    from hooks import HardwareProfile
+    return HardwareProfile(
+        platform="flight_computer",
+        compute_class="embedded",
+        connectivity="rf",
+        safety_critical=True,
+    )
+
+
 def get_edge_lab_scenarios() -> List[Dict[str, Any]]:
     """
     Return edge lab test scenarios for SpaceX telemetry.
