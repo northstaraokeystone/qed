@@ -111,6 +111,20 @@ Each hook keeps its own normalization formulas and safety classification ladder 
 
 ---
 
+## What's new in v8
+
+- **TruthLink DecisionPackets**: Deployment-level audit bundles wrapping manifests, receipts, ClarityClean audits, edge_lab metrics, and pattern usage. Each packet has a unique `packet_id` (SHA3) and shows exactly which patterns and recall levels a deployment runs.
+
+- **qed_config.json schema**: Tiny validated config per deployment with <1ms validation. Fields include `compression_target`, `recall_floor`, `max_fp_rate`, `enabled_patterns`, `safety_overrides`, and `regulatory_flags`.
+
+- **Merge rules (safety only tightens)**: Layered configs from global → deployment. Child configs can only tighten safety thresholds, never loosen. Recall floors take higher value, FP rates take lower value, regulatory flags OR together, enabled_patterns intersect.
+
+- **mesh_view_v3 deployment graph**: Packet-as-node view connecting deployments that share hooks, hardware, regions, or exploit patterns. Outputs `deployment_graph.json` showing reuse clusters across fleets.
+
+- **Deployment signing and comparison**: Optional cryptographic signing of DecisionPackets. Compare two packets to show deltas in patterns, metrics, and coverage.
+
+---
+
 ## ROI – what the math says
 
 All ROI logic is simple arithmetic on explicit inputs (telemetry volume, storage/network pricing, incident rates, value per event). No dark boxes; formulas are in the domain specs and can be re-run.
