@@ -38,6 +38,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import numpy as np
+from scipy.stats import beta
 
 try:
     from tqdm import tqdm
@@ -46,16 +47,6 @@ except ImportError:
     def tqdm(iterable, **kwargs):  # type: ignore[misc]
         return iterable
 
-
-# v7 imports
-from scipy.stats import beta
-
-import qed
-import sympy_constraints
-from clarity_clean_adapter import process_receipts
-from edge_lab_v2 import run_pattern_sims
-from shared_anomalies import load_library
-
 try:
     from rich.console import Console
     from rich.table import Table
@@ -63,6 +54,12 @@ try:
     RICH_AVAILABLE = True
 except ImportError:
     RICH_AVAILABLE = False
+
+import qed
+import sympy_constraints
+from clarity_clean_adapter import process_receipts
+from edge_lab_v2 import run_pattern_sims
+from shared_anomalies import load_library
 
 # --- KPI Thresholds ---
 KPI_RECALL_THRESHOLD = 0.9967  # 99.67% recall CI
