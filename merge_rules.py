@@ -1,460 +1,113 @@
 """
-QED v8 Merge Rules Engine - Governance for "Safety Only Tightens"
+merge_rules.py - v9 Config Merge Rules with Centrality-Based Thresholds
 
-This module is the governance engine ensuring safety constraints only tighten
-across configuration layers. It's not just a validator - it's a collaborator
-that simulates, auto-repairs, and explains merges with full auditability.
+Replaces mode-based validation with centrality-computed policies.
+Safety constraints can only tighten across config layers.
+Compaction resistance computed from centrality and safety tags.
 
-Supports multi-level chains (global -> company -> region -> deployment) with:
-- Auto-repair: Suggests and applies fixes instead of just rejecting
-- Simulation: Preview merges before committing
-- Conflict detection: Pre-flight checks for N configs
-- Audit trail: Every merge emits cryptographic receipt
+v9 Paradigm Shifts:
+===================
+1. DELETE mode transitions: No shadow_mode_allowed, no PatternMode enum
+2. Value is Topology: CENTRALITY_FLOOR = 0.2 replaces $1M threshold
+3. Safety patterns are immortal: safety_tag=True → infinite compaction resistance
 
-Design Principles:
-- Collaborative: Suggests fixes, doesn't just reject
-- Predictive: Simulate before commit
-- Multi-level: Chains of N configs, not just pairs
-- Auditable: Every merge emits receipt automatically
-- Defensive: Guards against edge cases (empty intersection, etc.)
+Core Invariants:
+================
+- Safety only tightens: recall_floor can only increase, max_fp can only decrease
+- Safety tags cannot downgrade: True→False is VIOLATION
+- Centrality floor warnings: patterns < 0.2 centrality emit warnings (not hard block)
+- Policy diffs required: every config change emits policy_diff_receipt
 
-Consumed by:
-- qed.py (runtime config loading)
-- proof.py (CLI config operations)
-- TruthLink (packet config validation)
+What does NOT exist in this file:
+==================================
+- shadow_mode_allowed field or validation
+- PatternMode enum or mode references
+- Mode transition validation (live→shadow→deprecated)
+- Dollar amount thresholds ($1M, $10M) - use centrality instead
+
+References:
+===========
+- CLAUDEME Section 2.4: DIFFONLY, StepLock, no hotpath learning
+- CLAUDEME Section 5.2: receipt schemas and self-describing modules
+- CLAUDEME Section 3.6: Simplicity Rule (explainable in 5 minutes)
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
-import warnings
-from dataclasses import dataclass, field, asdict
-from datetime import datetime, timezone
-from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional, Tuple, Union
-
-from config_schema import QEDConfig, ConfigProvenance
-
+from dataclasses import dataclass, field
+from datetime import datetime, timezone, timedelta
+from typing import Any, Dict, List, Optional, Tuple
 
 __all__ = [
-    'merge',
-    'merge_chain',
-    'simulate_merge',
-    'suggest_repairs',
-    'apply_repairs',
-    'detect_conflicts',
-    'emit_receipt',
-    'MergeResult',
-    'MergeExplanation',
-    'MergeReceipt',
-    'MergeTrace',
-    'MergeSimulation',
-    'Violation',
-    'Repair',
-    'Conflict',
-    'FieldDecision',
+    "RECEIPT_SCHEMA",
+    "CENTRALITY_FLOOR",
+    "SAFETY_FIELDS",
+    "MergeResult",
+    "validate_merge",
+    "safety_only_tightens",
+    "compute_compaction_resistance",
+    "check_centrality_floor",
+    "emit_policy_diff",
+    "merge_configs",
 ]
 
 
 # =============================================================================
-# Safety Field Detection
+# Constants
 # =============================================================================
 
-_SAFETY_FIELDS = frozenset({
-    'recall_floor',
-    'max_fp_rate',
-    'slo_latency_ms',
-    'slo_breach_budget',
+# Centrality floor - patterns below this emit warnings
+# Replaces $1M threshold from v4-v8
+CENTRALITY_FLOOR = 0.2
+
+# Safety-critical fields that can only tighten
+SAFETY_FIELDS = frozenset({
+    "recall_floor",
+    "max_false_positive_rate",
+    "safety_tag",
+    "regulatory_tag",
 })
 
-_REGULATORY_PREFIX = 'regulatory_'
-
-
-def is_safety_field(field_name: str) -> bool:
-    """
-    Check if a field is a safety-critical field.
-
-    Safety fields can only be tightened (never loosened) in child configs.
-
-    Args:
-        field_name: Name of the config field
-
-    Returns:
-        True if field is safety-critical
-    """
-    return (
-        field_name in _SAFETY_FIELDS or
-        field_name.startswith('slo_') or
-        field_name.startswith(_REGULATORY_PREFIX)
-    )
-
-
-def cannot_loosen(field_name: str, parent_val: Any, child_val: Any) -> bool:
-    """
-    Check if child value attempts to loosen a safety constraint.
-
-    Handles numeric comparison, set comparison, and flag comparison.
-
-    Args:
-        field_name: Name of the config field
-        parent_val: Parent config value
-        child_val: Child config value
-
-    Returns:
-        True if child attempts to loosen (violation)
-    """
-    if field_name == 'recall_floor':
-        # Higher = stricter, so child < parent is loosening
-        return child_val < parent_val
-
-    if field_name == 'max_fp_rate':
-        # Lower = stricter, so child > parent is loosening
-        return child_val > parent_val
-
-    if field_name == 'slo_latency_ms':
-        # Lower = stricter, so child > parent is loosening
-        return child_val > parent_val
-
-    if field_name == 'slo_breach_budget':
-        # Lower = stricter, so child > parent is loosening
-        return child_val > parent_val
-
-    if field_name == 'enabled_patterns':
-        # Intersection rule - child adding patterns parent doesn't have
-        parent_set = set(parent_val) if parent_val else set()
-        child_set = set(child_val) if child_val else set()
-        # If child has patterns not in parent, that's loosening
-        return len(child_set - parent_set) > 0 if parent_set else False
-
-    if field_name == 'regulatory_flags':
-        # OR rule - removing required flags is loosening
-        if isinstance(parent_val, dict) and isinstance(child_val, dict):
-            for flag, required in parent_val.items():
-                if required and not child_val.get(flag, False):
-                    return True  # Removing required flag
-        return False
-
-    # Unknown field - allow
-    return False
-
-
-def empty_intersection_guard(
-    parent_patterns: Union[List[str], Tuple[str, ...]],
-    child_patterns: Union[List[str], Tuple[str, ...]]
-) -> Tuple[List[str], Optional[str]]:
-    """
-    Guard against empty pattern intersection.
-
-    If intersection would be empty, emit warning to prevent
-    accidental "block everything" configs.
-
-    Args:
-        parent_patterns: Patterns from parent config
-        child_patterns: Patterns from child config
-
-    Returns:
-        Tuple of (intersection_list, warning_message or None)
-    """
-    parent_set = set(parent_patterns) if parent_patterns else set()
-    child_set = set(child_patterns) if child_patterns else set()
-
-    # Special case: empty means "all patterns"
-    if not parent_set and not child_set:
-        return [], None  # Both empty = all patterns allowed
-
-    if not parent_set:
-        # Parent allows all, use child's
-        return sorted(child_set), None
-
-    if not child_set:
-        # Child allows all, use parent's
-        return sorted(parent_set), None
-
-    intersection = parent_set & child_set
-
-    if not intersection:
-        warning = (
-            f"Empty pattern intersection! Parent has {len(parent_set)} patterns, "
-            f"child has {len(child_set)} patterns, but none overlap. "
-            f"This would block ALL patterns."
-        )
-        return [], warning
-
-    return sorted(intersection), None
-
 
 # =============================================================================
-# Violation Dataclass
+# Receipt Schema (self-describing module contract per CLAUDEME 3.6)
 # =============================================================================
 
-@dataclass(frozen=True)
-class Violation:
-    """
-    Represents a merge rule violation.
-
-    A violation occurs when a child config attempts to loosen
-    safety constraints relative to its parent.
-    """
-    field: str
-    rule: str
-    parent_value: Any
-    child_value: Any
-    attempted_direction: Literal["loosen", "disable", "conflict"]
-    severity: Literal["error", "warning"]
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Export as dictionary."""
-        return asdict(self)
-
-    def __str__(self) -> str:
-        return (
-            f"[{self.severity.upper()}] {self.field}: "
-            f"Cannot {self.attempted_direction} from {self.parent_value} to {self.child_value} "
-            f"(rule: {self.rule})"
-        )
-
-
-# =============================================================================
-# Repair Dataclass
-# =============================================================================
-
-@dataclass(frozen=True)
-class Repair:
-    """
-    Represents an auto-repair action.
-
-    When auto_repair=True, repairs are computed and applied to
-    bring child config into compliance with merge rules.
-    """
-    field: str
-    original_value: Any
-    repaired_value: Any
-    repair_action: str
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Export as dictionary."""
-        return asdict(self)
-
-    def __str__(self) -> str:
-        return (
-            f"{self.field}: {self.original_value} -> {self.repaired_value} "
-            f"({self.repair_action})"
-        )
-
-
-# =============================================================================
-# Conflict Dataclass
-# =============================================================================
-
-@dataclass(frozen=True)
-class Conflict:
-    """
-    Represents a conflict between multiple configs.
-
-    Used by detect_conflicts() for pre-flight validation before
-    attempting a merge chain.
-    """
-    field: str
-    configs_involved: Tuple[str, ...]
-    values: Dict[str, Any]
-    resolution_strategy: str
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Export as dictionary."""
-        return {
-            'field': self.field,
-            'configs_involved': list(self.configs_involved),
-            'values': self.values,
-            'resolution_strategy': self.resolution_strategy
-        }
-
-    def __str__(self) -> str:
-        configs = ", ".join(self.configs_involved)
-        return f"{self.field}: conflict between [{configs}] - {self.resolution_strategy}"
-
-
-# =============================================================================
-# FieldDecision Dataclass
-# =============================================================================
-
-@dataclass(frozen=True)
-class FieldDecision:
-    """
-    Documents how a single field was merged.
-
-    Part of MergeExplanation - provides transparency into
-    merge logic for each field.
-    """
-    field: str
-    parent_value: Any
-    child_value: Any
-    merged_value: Any
-    rule_applied: str
-    direction: Literal["from_parent", "from_child", "combined", "intersection"]
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Export as dictionary."""
-        return asdict(self)
-
-
-# =============================================================================
-# MergeExplanation Dataclass
-# =============================================================================
-
-@dataclass(frozen=True)
-class MergeExplanation:
-    """
-    Human-readable explanation of a merge operation.
-
-    Provides complete transparency into what happened during merge,
-    why decisions were made, and the overall safety assessment.
-    """
-    summary: str
-    field_decisions: Dict[str, FieldDecision]
-    patterns_kept: Tuple[str, ...]
-    patterns_removed: Tuple[str, ...]
-    regulatory_combined: Dict[str, bool]
-    safety_direction: Literal["tightened", "unchanged", "VIOLATION"]
-    narration: str
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Export as dictionary."""
-        return {
-            'summary': self.summary,
-            'field_decisions': {k: v.to_dict() for k, v in self.field_decisions.items()},
-            'patterns_kept': list(self.patterns_kept),
-            'patterns_removed': list(self.patterns_removed),
-            'regulatory_combined': self.regulatory_combined,
-            'safety_direction': self.safety_direction,
-            'narration': self.narration
-        }
-
-
-# =============================================================================
-# MergeReceipt Dataclass
-# =============================================================================
-
-@dataclass(frozen=True)
-class MergeReceipt:
-    """
-    Cryptographic receipt for audit trail.
-
-    Every merge operation generates a receipt that can be used to:
-    - Prove what configs were merged
-    - Verify integrity of the result
-    - Track who/when/why for compliance
-    """
-    timestamp: str
-    receipt_id: str
-    parent_hash: str
-    child_hash: str
-    merged_hash: str
-    is_valid: bool
-    violations_count: int
-    repairs_count: int
-    fields_tightened: Tuple[str, ...]
-    patterns_removed: Tuple[str, ...]
-    author: str
-    reason: str
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Export as dictionary."""
-        return {
-            'timestamp': self.timestamp,
-            'receipt_id': self.receipt_id,
-            'parent_hash': self.parent_hash,
-            'child_hash': self.child_hash,
-            'merged_hash': self.merged_hash,
-            'is_valid': self.is_valid,
-            'violations_count': self.violations_count,
-            'repairs_count': self.repairs_count,
-            'fields_tightened': list(self.fields_tightened),
-            'patterns_removed': list(self.patterns_removed),
-            'author': self.author,
-            'reason': self.reason
-        }
-
-    def to_json(self) -> str:
-        """Export as JSON string."""
-        return json.dumps(self.to_dict(), separators=(',', ':'))
-
-
-def emit_receipt(receipt: MergeReceipt, output_path: str = "merge_receipts.jsonl") -> None:
-    """
-    Append receipt to JSONL audit log.
-
-    Creates the file if it doesn't exist, appends if it does.
-
-    Args:
-        receipt: MergeReceipt to emit
-        output_path: Path to JSONL file (default: merge_receipts.jsonl)
-    """
-    path = Path(output_path)
-    with path.open('a', encoding='utf-8') as f:
-        f.write(receipt.to_json() + '\n')
-
-
-# =============================================================================
-# MergeTrace Dataclass (for chain merges)
-# =============================================================================
-
-@dataclass(frozen=True)
-class MergeTrace:
-    """
-    Trace of a multi-level merge chain.
-
-    Records what happened at each level for full auditability.
-    """
-    levels: Tuple[str, ...]
-    per_level_violations: Dict[str, Tuple[Violation, ...]]
-    per_level_repairs: Dict[str, Tuple[Repair, ...]]
-    cumulative_tightening: Dict[str, Tuple[Any, Any]]
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Export as dictionary."""
-        return {
-            'levels': list(self.levels),
-            'per_level_violations': {
-                k: [v.to_dict() for v in vlist]
-                for k, vlist in self.per_level_violations.items()
-            },
-            'per_level_repairs': {
-                k: [r.to_dict() for r in rlist]
-                for k, rlist in self.per_level_repairs.items()
-            },
-            'cumulative_tightening': {
-                k: [v[0], v[1]] for k, v in self.cumulative_tightening.items()
-            }
-        }
-
-
-# =============================================================================
-# MergeSimulation Dataclass
-# =============================================================================
-
-@dataclass(frozen=True)
-class MergeSimulation:
-    """
-    Result of simulating a merge (dry run).
-
-    Preview what would happen without actually committing.
-    """
-    would_be_valid: bool
-    merged_preview: Optional[QEDConfig]
-    violations_preview: Tuple[Violation, ...]
-    repairs_available: Tuple[Repair, ...]
-    impact_summary: str
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Export as dictionary."""
-        return {
-            'would_be_valid': self.would_be_valid,
-            'merged_preview': self.merged_preview.to_dict() if self.merged_preview else None,
-            'violations_preview': [v.to_dict() for v in self.violations_preview],
-            'repairs_available': [r.to_dict() for r in self.repairs_available],
-            'impact_summary': self.impact_summary
-        }
+RECEIPT_SCHEMA: List[Dict[str, Any]] = [
+    {
+        "type": "merge_receipt",
+        "version": "1.0.0",
+        "description": "Receipt emitted by validate_merge() for config merge validation",
+        "fields": {
+            "receipt_id": "SHA3-256 hash (16 chars) of base_hash + overlay_hash + timestamp",
+            "timestamp": "ISO UTC timestamp",
+            "base_hash": "SHA3-256 hash of base config",
+            "overlay_hash": "SHA3-256 hash of overlay config",
+            "merged_hash": "SHA3-256 hash of merged config (empty if invalid)",
+            "valid": "bool - whether merge satisfies safety constraints",
+            "violations": "List[str] - violation messages if any",
+            "warnings": "List[str] - warnings about low centrality patterns",
+            "tightened_fields": "List[str] - safety fields that were tightened",
+        },
+    },
+    {
+        "type": "policy_diff_receipt",
+        "version": "1.0.0",
+        "description": "Receipt emitted when config changes (per Charter line 88-89)",
+        "fields": {
+            "receipt_id": "SHA3-256 hash (16 chars) of diff content",
+            "timestamp": "ISO UTC timestamp",
+            "base_hash": "SHA3-256 hash of base config",
+            "overlay_hash": "SHA3-256 hash of overlay config",
+            "diffs": "Dict[field_name, Dict] - changes detected",
+            "owner": "str - who made the change",
+            "reason": "str - why change was made",
+            "auto_expiry": "ISO timestamp - when this policy expires (default 7 days)",
+        },
+    },
+]
 
 
 # =============================================================================
@@ -464,1017 +117,413 @@ class MergeSimulation:
 @dataclass(frozen=True)
 class MergeResult:
     """
-    Complete result of a merge operation.
+    Result of config merge validation.
 
-    Single return type containing everything: merged config,
-    validation status, violations, repairs, explanation, and receipt.
+    Attributes:
+        valid: True if merge satisfies all safety constraints
+        merged_config: Merged config dict if valid, None otherwise
+        violations: List of violation messages
+        policy_diffs: List of policy_diff_receipt dicts
+        receipt: merge_receipt dict for audit trail
     """
-    merged: Optional[QEDConfig]
-    is_valid: bool
-    violations: Tuple[Violation, ...]
-    repairs_applied: Tuple[Repair, ...]
-    explanation: MergeExplanation
-    receipt: MergeReceipt
-    trace: Optional[MergeTrace] = None
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Export as dictionary."""
-        return {
-            'merged': self.merged.to_dict() if self.merged else None,
-            'is_valid': self.is_valid,
-            'violations': [v.to_dict() for v in self.violations],
-            'repairs_applied': [r.to_dict() for r in self.repairs_applied],
-            'explanation': self.explanation.to_dict(),
-            'receipt': self.receipt.to_dict(),
-            'trace': self.trace.to_dict() if self.trace else None
-        }
+    valid: bool
+    merged_config: Optional[Dict[str, Any]]
+    violations: List[str]
+    policy_diffs: List[Dict[str, Any]]
+    receipt: Dict[str, Any]
 
 
 # =============================================================================
-# Core Merge Implementation
+# Safety Validation Functions
 # =============================================================================
 
-def _compute_receipt_id(
-    parent_hash: str,
-    child_hash: str,
-    timestamp: str
-) -> str:
-    """Compute SHA3 receipt ID from merge inputs."""
-    data = f"{parent_hash}:{child_hash}:{timestamp}"
-    return hashlib.sha3_256(data.encode()).hexdigest()[:16]
-
-
-def _merge_field(
+def safety_only_tightens(
+    base_value: Any,
+    overlay_value: Any,
     field_name: str,
-    parent_val: Any,
-    child_val: Any
-) -> Tuple[Any, str, str]:
+) -> Tuple[bool, Optional[str]]:
     """
-    Merge a single field according to safety rules.
+    Check if overlay value tightens (or maintains) safety constraint.
 
-    Returns: (merged_value, rule_applied, direction)
+    Safety tightening rules:
+    - recall_floor: overlay >= base (can only increase)
+    - max_false_positive_rate: overlay <= base (can only decrease)
+    - safety_tag: False→True OK, True→False VIOLATION
+    - regulatory_tag: False→True OK, True→False VIOLATION
+
+    Args:
+        base_value: Value from base config
+        overlay_value: Value from overlay config
+        field_name: Name of the field being merged
+
+    Returns:
+        Tuple of (is_valid, violation_reason)
+        If is_valid=True, violation_reason is None
+        If is_valid=False, violation_reason explains the violation
     """
-    if field_name == 'recall_floor':
-        # Take stricter (higher)
-        merged = max(parent_val, child_val)
-        direction = "from_child" if merged == child_val else "from_parent"
-        return merged, "max(parent, child) - take stricter", direction
+    if field_name == "recall_floor":
+        # recall_floor can only increase (tighten)
+        if overlay_value < base_value:
+            return False, f"recall_floor cannot decrease: {base_value} -> {overlay_value}"
+        return True, None
 
-    if field_name == 'max_fp_rate':
-        # Take stricter (lower)
-        merged = min(parent_val, child_val)
-        direction = "from_child" if merged == child_val else "from_parent"
-        return merged, "min(parent, child) - take stricter", direction
+    if field_name == "max_false_positive_rate":
+        # max_fp_rate can only decrease (tighten)
+        if overlay_value > base_value:
+            return False, f"max_false_positive_rate cannot increase: {base_value} -> {overlay_value}"
+        return True, None
 
-    if field_name == 'slo_latency_ms':
-        # Take tighter (lower)
-        merged = min(parent_val, child_val)
-        direction = "from_child" if merged == child_val else "from_parent"
-        return merged, "min(parent, child) - take tighter", direction
+    if field_name == "safety_tag":
+        # safety_tag: True→False is violation
+        if base_value is True and overlay_value is False:
+            return False, "safety_tag cannot downgrade from True to False"
+        return True, None
 
-    if field_name == 'slo_breach_budget':
-        # Take tighter (lower)
-        merged = min(parent_val, child_val)
-        direction = "from_child" if merged == child_val else "from_parent"
-        return merged, "min(parent, child) - take tighter", direction
+    if field_name == "regulatory_tag":
+        # regulatory_tag: True→False is violation
+        if base_value is True and overlay_value is False:
+            return False, "regulatory_tag cannot downgrade from True to False"
+        return True, None
 
-    if field_name == 'enabled_patterns':
-        # Intersection - only patterns in BOTH
-        parent_set = set(parent_val) if parent_val else set()
-        child_set = set(child_val) if child_val else set()
-
-        if not parent_set and not child_set:
-            return tuple(), "intersection - both empty = all allowed", "combined"
-        if not parent_set:
-            return tuple(sorted(child_set)), "child patterns (parent allows all)", "from_child"
-        if not child_set:
-            return tuple(sorted(parent_set)), "parent patterns (child allows all)", "from_parent"
-
-        merged = tuple(sorted(parent_set & child_set))
-        return merged, "intersection - only patterns in BOTH", "intersection"
-
-    if field_name == 'regulatory_flags':
-        # OR - if either requires, merged requires
-        parent_flags = parent_val if isinstance(parent_val, dict) else {}
-        child_flags = child_val if isinstance(child_val, dict) else {}
-
-        merged = {}
-        all_flags = set(parent_flags.keys()) | set(child_flags.keys())
-        for flag in all_flags:
-            # OR: True if either is True
-            merged[flag] = parent_flags.get(flag, False) or child_flags.get(flag, False)
-
-        return merged, "OR - if either requires, merged requires", "combined"
-
-    if field_name == 'safety_overrides':
-        # Union with parent wins on conflict
-        parent_overrides = parent_val if isinstance(parent_val, dict) else {}
-        child_overrides = child_val if isinstance(child_val, dict) else {}
-
-        merged = dict(child_overrides)  # Start with child
-        merged.update(parent_overrides)  # Parent wins on conflict
-
-        return merged, "union - parent wins on conflict", "combined"
-
-    # Non-safety fields: take child value
-    return child_val, "child value (non-safety field)", "from_child"
+    # Unknown field - allow
+    return True, None
 
 
-def _detect_violations(
-    parent: QEDConfig,
-    child: QEDConfig
-) -> List[Violation]:
-    """Detect all violations in child relative to parent."""
-    violations = []
+def check_centrality_floor(
+    patterns: Dict[str, float],
+    floor: float = CENTRALITY_FLOOR,
+) -> List[str]:
+    """
+    Check which patterns fall below centrality floor.
 
-    # recall_floor: child cannot be lower
-    if child.recall_floor < parent.recall_floor:
-        violations.append(Violation(
-            field='recall_floor',
-            rule='safety_only_tightens',
-            parent_value=parent.recall_floor,
-            child_value=child.recall_floor,
-            attempted_direction='loosen',
-            severity='error'
-        ))
+    Patterns below floor should not be in live operations.
+    This is a warning, not a hard block (pattern may be new/growing).
 
-    # max_fp_rate: child cannot be higher
-    if child.max_fp_rate > parent.max_fp_rate:
-        violations.append(Violation(
-            field='max_fp_rate',
-            rule='safety_only_tightens',
-            parent_value=parent.max_fp_rate,
-            child_value=child.max_fp_rate,
-            attempted_direction='loosen',
-            severity='error'
-        ))
+    Args:
+        patterns: Dict mapping pattern_id to centrality value
+        floor: Minimum centrality threshold (default: 0.2)
 
-    # slo_latency_ms: child cannot be higher
-    if child.slo_latency_ms > parent.slo_latency_ms:
-        violations.append(Violation(
-            field='slo_latency_ms',
-            rule='safety_only_tightens',
-            parent_value=parent.slo_latency_ms,
-            child_value=child.slo_latency_ms,
-            attempted_direction='loosen',
-            severity='error'
-        ))
-
-    # slo_breach_budget: child cannot be higher
-    if child.slo_breach_budget > parent.slo_breach_budget:
-        violations.append(Violation(
-            field='slo_breach_budget',
-            rule='safety_only_tightens',
-            parent_value=parent.slo_breach_budget,
-            child_value=child.slo_breach_budget,
-            attempted_direction='loosen',
-            severity='error'
-        ))
-
-    # enabled_patterns: child cannot add patterns not in parent
-    parent_patterns = set(parent.enabled_patterns) if parent.enabled_patterns else set()
-    child_patterns = set(child.enabled_patterns) if child.enabled_patterns else set()
-
-    if parent_patterns:  # Only check if parent has restrictions
-        added_patterns = child_patterns - parent_patterns
-        if added_patterns:
-            violations.append(Violation(
-                field='enabled_patterns',
-                rule='intersection_only',
-                parent_value=sorted(parent_patterns),
-                child_value=sorted(child_patterns),
-                attempted_direction='loosen',
-                severity='error'
-            ))
-
-    # regulatory_flags: child cannot disable required flags
-    for flag, required in parent.regulatory_flags.items():
-        if required and not child.regulatory_flags.get(flag, False):
-            violations.append(Violation(
-                field=f'regulatory_flags.{flag}',
-                rule='cannot_disable_required',
-                parent_value=True,
-                child_value=child.regulatory_flags.get(flag, False),
-                attempted_direction='disable',
-                severity='error'
-            ))
-
-    return violations
+    Returns:
+        List of pattern_ids with centrality < floor
+    """
+    below_floor = []
+    for pattern_id, centrality in patterns.items():
+        if centrality < floor:
+            below_floor.append(pattern_id)
+    return below_floor
 
 
-def _compute_repairs(violations: List[Violation], parent: QEDConfig) -> List[Repair]:
-    """Compute repairs for all violations."""
-    repairs = []
+# =============================================================================
+# Compaction Resistance
+# =============================================================================
 
-    for v in violations:
-        if v.field == 'recall_floor':
-            repairs.append(Repair(
-                field='recall_floor',
-                original_value=v.child_value,
-                repaired_value=v.parent_value,
-                repair_action='tightened to parent value'
-            ))
+def compute_compaction_resistance(
+    pattern_id: str,
+    centrality: float,
+    safety_tag: bool,
+    age_days: int,
+) -> float:
+    """
+    Compute compaction resistance score for pattern retention policy.
 
-        elif v.field == 'max_fp_rate':
-            repairs.append(Repair(
-                field='max_fp_rate',
-                original_value=v.child_value,
-                repaired_value=v.parent_value,
-                repair_action='tightened to parent value'
-            ))
+    Resistance formula (replacing mode-based retention):
+    - If safety_tag=True: return infinity (immortal, never compact)
+    - Else: resistance = centrality * (1 + 1/max(age_days, 1))
 
-        elif v.field == 'slo_latency_ms':
-            repairs.append(Repair(
-                field='slo_latency_ms',
-                original_value=v.child_value,
-                repaired_value=v.parent_value,
-                repair_action='tightened to parent value'
-            ))
+    High centrality + young age = high resistance (keep longer)
+    Low centrality + old age = low resistance (compact candidate)
 
-        elif v.field == 'slo_breach_budget':
-            repairs.append(Repair(
-                field='slo_breach_budget',
-                original_value=v.child_value,
-                repaired_value=v.parent_value,
-                repair_action='tightened to parent value'
-            ))
+    This function enables causal_graph.compact() to compute retention
+    tiers without needing stored mode state.
 
-        elif v.field == 'enabled_patterns':
-            # Repair by taking intersection
-            parent_set = set(parent.enabled_patterns) if parent.enabled_patterns else set()
-            child_set = set(v.child_value) if v.child_value else set()
-            repaired = sorted(parent_set & child_set) if parent_set else sorted(child_set)
-            repairs.append(Repair(
-                field='enabled_patterns',
-                original_value=v.child_value,
-                repaired_value=repaired,
-                repair_action='intersection with parent patterns'
-            ))
+    Args:
+        pattern_id: Pattern identifier (for logging/debug)
+        centrality: Pattern's graph centrality [0, 1]
+        safety_tag: If True, pattern is safety-critical
+        age_days: Age of pattern in days
 
-        elif v.field.startswith('regulatory_flags.'):
-            flag_name = v.field.split('.')[1]
-            repairs.append(Repair(
-                field=v.field,
-                original_value=v.child_value,
-                repaired_value=True,
-                repair_action=f'enabled required flag {flag_name}'
-            ))
+    Returns:
+        Resistance score in [0, infinity)
+        - infinity if safety_tag=True (immortal)
+        - centrality * (1 + 1/age_days) otherwise
+    """
+    if safety_tag:
+        # Safety patterns never killed (per QED_Build_Strat_v5 line 439-441)
+        return float('inf')
 
-    return repairs
+    # Non-safety patterns: decay with age, weighted by centrality
+    # Young patterns resist more: age_days=1 → multiplier=2.0
+    # Old patterns resist less: age_days=365 → multiplier=1.003
+    age_divisor = max(age_days, 1)  # Prevent division by zero
+    resistance = centrality * (1 + 1 / age_divisor)
+
+    return resistance
 
 
-def _build_explanation(
-    parent: QEDConfig,
-    child: QEDConfig,
-    merged: QEDConfig,
-    violations: List[Violation]
-) -> MergeExplanation:
-    """Build human-readable merge explanation."""
-    field_decisions: Dict[str, FieldDecision] = {}
-    fields_tightened: List[str] = []
+# =============================================================================
+# Policy Diff Emission
+# =============================================================================
 
-    # Track decisions for safety fields
-    safety_fields = ['recall_floor', 'max_fp_rate', 'slo_latency_ms', 'slo_breach_budget']
+def emit_policy_diff(
+    base: Dict[str, Any],
+    overlay: Dict[str, Any],
+    owner: str,
+    reason: str,
+) -> Dict[str, Any]:
+    """
+    Emit policy_diff_receipt tracking config changes.
 
-    for fname in safety_fields:
-        parent_val = getattr(parent, fname)
-        child_val = getattr(child, fname)
-        merged_val = getattr(merged, fname)
-        merged_result, rule, direction = _merge_field(fname, parent_val, child_val)
+    Per Charter line 88-89: every config change emits policy_diff.
 
-        field_decisions[fname] = FieldDecision(
-            field=fname,
-            parent_value=parent_val,
-            child_value=child_val,
-            merged_value=merged_val,
-            rule_applied=rule,
-            direction=direction
-        )
+    Args:
+        base: Base config dict
+        overlay: Overlay config dict
+        owner: Who made the change
+        reason: Why change was made
 
-        if merged_val != child_val:
-            fields_tightened.append(fname)
+    Returns:
+        policy_diff_receipt dict
+    """
+    timestamp = datetime.now(timezone.utc).isoformat()
 
-    # Patterns
-    parent_patterns = set(parent.enabled_patterns) if parent.enabled_patterns else set()
-    child_patterns = set(child.enabled_patterns) if child.enabled_patterns else set()
-    merged_patterns = set(merged.enabled_patterns) if merged.enabled_patterns else set()
+    # Compute hashes
+    base_canonical = json.dumps(base, sort_keys=True, separators=(",", ":"))
+    base_hash = hashlib.sha3_256(base_canonical.encode()).hexdigest()[:16]
 
-    if parent_patterns or child_patterns:
-        all_patterns = parent_patterns | child_patterns
-        patterns_kept = sorted(merged_patterns)
-        patterns_removed = sorted(all_patterns - merged_patterns)
-    else:
-        patterns_kept = []
-        patterns_removed = []
+    overlay_canonical = json.dumps(overlay, sort_keys=True, separators=(",", ":"))
+    overlay_hash = hashlib.sha3_256(overlay_canonical.encode()).hexdigest()[:16]
 
-    _, pattern_rule, pattern_dir = _merge_field(
-        'enabled_patterns',
-        parent.enabled_patterns,
-        child.enabled_patterns
-    )
-    field_decisions['enabled_patterns'] = FieldDecision(
-        field='enabled_patterns',
-        parent_value=list(parent.enabled_patterns),
-        child_value=list(child.enabled_patterns),
-        merged_value=list(merged.enabled_patterns),
-        rule_applied=pattern_rule,
-        direction=pattern_dir
-    )
+    # Detect diffs
+    diffs: Dict[str, Dict[str, Any]] = {}
+    all_keys = set(base.keys()) | set(overlay.keys())
 
-    # Regulatory flags
-    merged_reg, reg_rule, reg_dir = _merge_field(
-        'regulatory_flags',
-        parent.regulatory_flags,
-        child.regulatory_flags
-    )
-    field_decisions['regulatory_flags'] = FieldDecision(
-        field='regulatory_flags',
-        parent_value=parent.regulatory_flags,
-        child_value=child.regulatory_flags,
-        merged_value=merged.regulatory_flags,
-        rule_applied=reg_rule,
-        direction=reg_dir
-    )
+    for key in all_keys:
+        base_val = base.get(key)
+        overlay_val = overlay.get(key)
 
-    # Safety overrides
-    merged_so, so_rule, so_dir = _merge_field(
-        'safety_overrides',
-        parent.safety_overrides,
-        child.safety_overrides
-    )
-    field_decisions['safety_overrides'] = FieldDecision(
-        field='safety_overrides',
-        parent_value=parent.safety_overrides,
-        child_value=child.safety_overrides,
-        merged_value=merged.safety_overrides,
-        rule_applied=so_rule,
-        direction=so_dir
-    )
+        if base_val != overlay_val:
+            diffs[key] = {
+                "base": base_val,
+                "overlay": overlay_val,
+            }
 
-    # Determine safety direction
-    if violations:
-        safety_direction: Literal["tightened", "unchanged", "VIOLATION"] = "VIOLATION"
-    elif fields_tightened:
-        safety_direction = "tightened"
-    else:
-        safety_direction = "unchanged"
+    # Auto-expiry: 7 days from now (default policy TTL)
+    auto_expiry = (datetime.now(timezone.utc) + timedelta(days=7)).isoformat()
 
-    # Build summary
-    summary_parts = [f"Merged {parent.deployment_id} -> {child.deployment_id}"]
-    if fields_tightened:
-        summary_parts.append(f"{len(fields_tightened)} fields tightened")
-    if patterns_removed:
-        summary_parts.append(f"{len(patterns_removed)} patterns removed")
-    summary = ": ".join(summary_parts)
+    # Generate receipt ID
+    diff_content = json.dumps({
+        "base_hash": base_hash,
+        "overlay_hash": overlay_hash,
+        "diffs": diffs,
+        "timestamp": timestamp,
+    }, separators=(",", ":"))
+    receipt_id = hashlib.sha3_256(diff_content.encode()).hexdigest()[:16]
 
-    # Build narration
-    narration_lines = [
-        f"Merging parent config '{parent.deployment_id}' with child config '{child.deployment_id}'.",
-    ]
-
-    if fields_tightened:
-        narration_lines.append(
-            f"The following safety fields were tightened to ensure compliance: {', '.join(fields_tightened)}."
-        )
-
-    if patterns_removed:
-        narration_lines.append(
-            f"Pattern intersection removed {len(patterns_removed)} patterns that were not common to both configs."
-        )
-
-    if merged.regulatory_flags:
-        enabled_flags = [f for f, v in merged.regulatory_flags.items() if v]
-        if enabled_flags:
-            narration_lines.append(
-                f"Regulatory flags enabled in merged config: {', '.join(enabled_flags)}."
-            )
-
-    if violations:
-        narration_lines.append(
-            f"WARNING: {len(violations)} violations detected. "
-            "Child config attempted to loosen safety constraints."
-        )
-    else:
-        narration_lines.append(
-            "Merge completed successfully with no violations. Safety constraints maintained."
-        )
-
-    narration = " ".join(narration_lines)
-
-    return MergeExplanation(
-        summary=summary,
-        field_decisions=field_decisions,
-        patterns_kept=tuple(patterns_kept),
-        patterns_removed=tuple(patterns_removed),
-        regulatory_combined=dict(merged.regulatory_flags),
-        safety_direction=safety_direction,
-        narration=narration
-    )
-
-
-def _create_merged_config(
-    parent: QEDConfig,
-    child: QEDConfig,
-    repairs: Optional[List[Repair]] = None,
-    author: str = "merge_rules",
-    reason: str = "config merge"
-) -> QEDConfig:
-    """Create merged config from parent and child."""
-    # Merge each field
-    recall_floor, _, _ = _merge_field('recall_floor', parent.recall_floor, child.recall_floor)
-    max_fp_rate, _, _ = _merge_field('max_fp_rate', parent.max_fp_rate, child.max_fp_rate)
-    slo_latency_ms, _, _ = _merge_field('slo_latency_ms', parent.slo_latency_ms, child.slo_latency_ms)
-    slo_breach_budget, _, _ = _merge_field('slo_breach_budget', parent.slo_breach_budget, child.slo_breach_budget)
-    enabled_patterns, _, _ = _merge_field('enabled_patterns', parent.enabled_patterns, child.enabled_patterns)
-    regulatory_flags, _, _ = _merge_field('regulatory_flags', parent.regulatory_flags, child.regulatory_flags)
-    safety_overrides, _, _ = _merge_field('safety_overrides', parent.safety_overrides, child.safety_overrides)
-
-    # Apply repairs if provided
-    if repairs:
-        for repair in repairs:
-            if repair.field == 'recall_floor':
-                recall_floor = repair.repaired_value
-            elif repair.field == 'max_fp_rate':
-                max_fp_rate = repair.repaired_value
-            elif repair.field == 'slo_latency_ms':
-                slo_latency_ms = repair.repaired_value
-            elif repair.field == 'slo_breach_budget':
-                slo_breach_budget = repair.repaired_value
-            elif repair.field == 'enabled_patterns':
-                enabled_patterns = tuple(repair.repaired_value)
-            elif repair.field.startswith('regulatory_flags.'):
-                flag_name = repair.field.split('.')[1]
-                regulatory_flags = dict(regulatory_flags)
-                regulatory_flags[flag_name] = repair.repaired_value
-
-    # Check for empty intersection warning
-    _, empty_warning = empty_intersection_guard(parent.enabled_patterns, child.enabled_patterns)
-    if empty_warning:
-        warnings.warn(f"MergeRules: {empty_warning}", UserWarning, stacklevel=4)
-
-    # Create provenance
-    provenance = ConfigProvenance.create(
-        author=author,
-        reason=reason,
-        parent_hash=parent.provenance.config_hash
-    )
-
-    # Build merged config dict
-    merged_data = {
-        'version': child.version,
-        'deployment_id': child.deployment_id,
-        'hook': child.hook,
-        'compression_target': child.compression_target,
-        'recall_floor': recall_floor,
-        'max_fp_rate': max_fp_rate,
-        'slo_latency_ms': slo_latency_ms,
-        'slo_breach_budget': slo_breach_budget,
-        'enabled_patterns': list(enabled_patterns),
-        'safety_overrides': dict(safety_overrides),
-        'regulatory_flags': dict(regulatory_flags),
-        'provenance': provenance.to_dict()
+    return {
+        "type": "policy_diff_receipt",
+        "receipt_id": receipt_id,
+        "timestamp": timestamp,
+        "base_hash": base_hash,
+        "overlay_hash": overlay_hash,
+        "diffs": diffs,
+        "owner": owner,
+        "reason": reason,
+        "auto_expiry": auto_expiry,
     }
 
-    return QEDConfig.from_dict(merged_data, validate=True, strict=False)
-
 
 # =============================================================================
-# Public API Functions
+# Core Merge Validation
 # =============================================================================
 
-def merge(
-    parent: QEDConfig,
-    child: QEDConfig,
-    auto_repair: bool = False,
-    author: str = "merge_rules",
-    reason: str = "config merge",
-    emit_receipt_flag: bool = True,
-    receipt_path: str = "merge_receipts.jsonl"
+def validate_merge(
+    base: Dict[str, Any],
+    overlay: Dict[str, Any],
+    centrality_lookup: Optional[Dict[str, float]] = None,
 ) -> MergeResult:
     """
-    Merge child config into parent with safety-only-tightens enforcement.
+    Validate and merge overlay config onto base config.
 
-    This is the single entry point for config merging, replacing separate
-    validate/merge/explain calls. Returns complete MergeResult with merged
-    config, validation status, violations, repairs, explanation, and receipt.
-
-    Merge rules enforced:
-    - recall_floor: max(parent, child) - take stricter (higher)
-    - max_fp_rate: min(parent, child) - take stricter (lower)
-    - slo_latency_ms: min(parent, child) - take tighter
-    - slo_breach_budget: min(parent, child) - take tighter
-    - enabled_patterns: intersection - only patterns in BOTH
-    - regulatory_flags: OR - if either requires, merged requires
-    - safety_overrides: union with parent wins on conflict
+    Merge rules:
+    1. Safety fields only tighten (recall_floor up, max_fp down)
+    2. Safety tags cannot downgrade (True→False is violation)
+    3. Centrality floor warnings for patterns < 0.2
+    4. Emits merge_receipt for audit trail
 
     Args:
-        parent: Parent config (stricter baseline)
-        child: Child config (can only tighten)
-        auto_repair: If True, automatically fix violations
-        author: Who triggered the merge (for audit)
-        reason: Why merge was attempted (for audit)
-        emit_receipt_flag: If True, emit receipt to JSONL
-        receipt_path: Path for receipt JSONL file
+        base: Base config dict
+        overlay: Overlay config dict to merge
+        centrality_lookup: Optional dict mapping pattern_id to centrality
 
     Returns:
-        MergeResult with all merge details
+        MergeResult with merged config or violations
     """
     timestamp = datetime.now(timezone.utc).isoformat()
+    violations: List[str] = []
+    warnings: List[str] = []
+    tightened_fields: List[str] = []
 
-    # Detect violations
-    violations = _detect_violations(parent, child)
-    repairs: List[Repair] = []
+    # Start with base config
+    merged = dict(base)
 
-    # Determine if we can produce valid merged config
-    is_valid = len(violations) == 0
-    merged: Optional[QEDConfig] = None
+    # Merge each field from overlay
+    for key, overlay_val in overlay.items():
+        base_val = base.get(key)
 
-    if is_valid:
-        # No violations - merge directly
-        merged = _create_merged_config(parent, child, author=author, reason=reason)
+        # Check safety fields
+        if key in SAFETY_FIELDS:
+            valid, violation_msg = safety_only_tightens(base_val, overlay_val, key)
+            if not valid:
+                violations.append(f"{key}: {violation_msg}")
+                # Don't apply overlay value on violation
+                continue
 
-    elif auto_repair:
-        # Violations exist but auto_repair enabled
-        repairs = _compute_repairs(violations, parent)
-        merged = _create_merged_config(parent, child, repairs=repairs, author=author, reason=reason)
-        is_valid = True  # After repair, it's valid
+            # Check if field was tightened
+            if overlay_val != base_val:
+                tightened_fields.append(key)
 
-    # Build explanation
-    if merged:
-        explanation = _build_explanation(parent, child, merged, violations)
-    else:
-        # Can't merge - provide explanation of why
-        explanation = _build_explanation(
-            parent, child,
-            child,  # Use child as placeholder
-            violations
-        )
+        # Apply overlay value (either safe or non-safety field)
+        merged[key] = overlay_val
 
-    # Compute tightened fields
-    fields_tightened: List[str] = []
-    if merged:
-        for fname in ['recall_floor', 'max_fp_rate', 'slo_latency_ms', 'slo_breach_budget']:
-            if getattr(merged, fname) != getattr(child, fname):
-                fields_tightened.append(fname)
+    # Check centrality floor if provided
+    if centrality_lookup:
+        below_floor = check_centrality_floor(centrality_lookup, CENTRALITY_FLOOR)
+        for pattern_id in below_floor:
+            warnings.append(
+                f"Pattern '{pattern_id}' has centrality {centrality_lookup[pattern_id]:.3f} "
+                f"below floor {CENTRALITY_FLOOR} (may not be ready for live operations)"
+            )
 
-    # Build receipt
-    receipt = MergeReceipt(
-        timestamp=timestamp,
-        receipt_id=_compute_receipt_id(
-            parent.provenance.config_hash,
-            child.provenance.config_hash,
-            timestamp
-        ),
-        parent_hash=parent.provenance.config_hash,
-        child_hash=child.provenance.config_hash,
-        merged_hash=merged.provenance.config_hash if merged else "",
-        is_valid=is_valid,
-        violations_count=len(violations),
-        repairs_count=len(repairs),
-        fields_tightened=tuple(fields_tightened),
-        patterns_removed=explanation.patterns_removed,
-        author=author,
-        reason=reason
-    )
+    # Compute hashes for receipt
+    base_canonical = json.dumps(base, sort_keys=True, separators=(",", ":"))
+    base_hash = hashlib.sha3_256(base_canonical.encode()).hexdigest()[:16]
 
-    # Emit receipt if enabled
-    if emit_receipt_flag:
-        try:
-            emit_receipt(receipt, receipt_path)
-        except Exception as e:
-            warnings.warn(f"Failed to emit merge receipt: {e}", UserWarning, stacklevel=2)
+    overlay_canonical = json.dumps(overlay, sort_keys=True, separators=(",", ":"))
+    overlay_hash = hashlib.sha3_256(overlay_canonical.encode()).hexdigest()[:16]
+
+    merged_canonical = json.dumps(merged, sort_keys=True, separators=(",", ":"))
+    merged_hash = hashlib.sha3_256(merged_canonical.encode()).hexdigest()[:16]
+
+    # Determine validity
+    valid = len(violations) == 0
+
+    # Generate receipt ID
+    receipt_content = f"{base_hash}:{overlay_hash}:{timestamp}"
+    receipt_id = hashlib.sha3_256(receipt_content.encode()).hexdigest()[:16]
+
+    # Create merge receipt
+    merge_receipt = {
+        "type": "merge_receipt",
+        "receipt_id": receipt_id,
+        "timestamp": timestamp,
+        "base_hash": base_hash,
+        "overlay_hash": overlay_hash,
+        "merged_hash": merged_hash if valid else "",
+        "valid": valid,
+        "violations": violations,
+        "warnings": warnings,
+        "tightened_fields": tightened_fields,
+    }
 
     return MergeResult(
-        merged=merged,
-        is_valid=is_valid,
-        violations=tuple(violations),
-        repairs_applied=tuple(repairs),
-        explanation=explanation,
-        receipt=receipt
+        valid=valid,
+        merged_config=merged if valid else None,
+        violations=violations,
+        policy_diffs=[],  # Populated by caller if needed
+        receipt=merge_receipt,
     )
 
 
-def merge_chain(
-    configs: List[QEDConfig],
-    auto_repair: bool = False,
-    author: str = "merge_rules",
-    reason: str = "chain merge",
-    emit_receipt_flag: bool = True,
-    receipt_path: str = "merge_receipts.jsonl"
+# =============================================================================
+# Layered Config Merge
+# =============================================================================
+
+def merge_configs(
+    configs: List[Dict[str, Any]],
+    centrality_lookup: Optional[Dict[str, float]] = None,
 ) -> MergeResult:
     """
-    Merge N configs in order: configs[0] -> configs[1] -> ... -> configs[N-1].
+    Merge list of configs in order (global → regional → deployment).
 
-    Each merge validates against the result of the previous merge.
-    Accumulates all violations and repairs across levels.
-    Returns final merged config with full trace.
-
-    Use case: global -> company -> region -> deployment in one call.
+    Each layer validated via validate_merge().
+    Stops on first violation.
+    Returns final MergeResult with full audit chain.
 
     Args:
-        configs: List of configs to merge in order
-        auto_repair: If True, auto-repair violations at each level
-        author: Who triggered the merge (for audit)
-        reason: Why merge was attempted (for audit)
-        emit_receipt_flag: If True, emit receipt to JSONL
-        receipt_path: Path for receipt JSONL file
+        configs: List of config dicts to merge in order
+        centrality_lookup: Optional dict mapping pattern_id to centrality
 
     Returns:
-        MergeResult with final config and trace of all levels
-
-    Raises:
-        ValueError: If fewer than 2 configs provided
+        MergeResult with final merged config or first violation
     """
-    if len(configs) < 2:
-        raise ValueError("merge_chain requires at least 2 configs")
+    if not configs:
+        raise ValueError("merge_configs requires at least 1 config")
 
-    # Track per-level results
-    levels: List[str] = []
-    per_level_violations: Dict[str, List[Violation]] = {}
-    per_level_repairs: Dict[str, List[Repair]] = {}
-    all_violations: List[Violation] = []
-    all_repairs: List[Repair] = []
+    if len(configs) == 1:
+        # Single config - trivial merge
+        return validate_merge(configs[0], {}, centrality_lookup)
 
-    # Track cumulative tightening from original values
-    original_values: Dict[str, Any] = {}
-    safety_fields = ['recall_floor', 'max_fp_rate', 'slo_latency_ms', 'slo_breach_budget']
-    for fname in safety_fields:
-        original_values[fname] = getattr(configs[0], fname)
+    # Accumulate policy diffs
+    all_policy_diffs: List[Dict[str, Any]] = []
 
-    # Merge chain
+    # Start with first config as base
     current = configs[0]
-    levels.append(current.deployment_id)
 
-    for i, child in enumerate(configs[1:], 1):
-        level_id = child.deployment_id
-        levels.append(level_id)
+    # Merge each subsequent config
+    for i, overlay in enumerate(configs[1:], 1):
+        result = validate_merge(current, overlay, centrality_lookup)
 
-        result = merge(
-            current, child,
-            auto_repair=auto_repair,
-            author=author,
-            reason=f"{reason} (level {i})",
-            emit_receipt_flag=False  # Emit one receipt at end
+        # Emit policy diff for this layer
+        policy_diff = emit_policy_diff(
+            base=current,
+            overlay=overlay,
+            owner=overlay.get("owner", "system"),
+            reason=overlay.get("reason", f"layer {i} merge"),
         )
+        all_policy_diffs.append(policy_diff)
 
-        # Track per-level
-        per_level_violations[level_id] = list(result.violations)
-        per_level_repairs[level_id] = list(result.repairs_applied)
-        all_violations.extend(result.violations)
-        all_repairs.extend(result.repairs_applied)
-
-        if not result.is_valid and not auto_repair:
-            # Chain fails - return with what we have
-            trace = MergeTrace(
-                levels=tuple(levels),
-                per_level_violations={k: tuple(v) for k, v in per_level_violations.items()},
-                per_level_repairs={k: tuple(v) for k, v in per_level_repairs.items()},
-                cumulative_tightening={}
-            )
-
-            # Build receipt for failed chain
-            timestamp = datetime.now(timezone.utc).isoformat()
-            receipt = MergeReceipt(
-                timestamp=timestamp,
-                receipt_id=_compute_receipt_id(
-                    configs[0].provenance.config_hash,
-                    configs[-1].provenance.config_hash,
-                    timestamp
-                ),
-                parent_hash=configs[0].provenance.config_hash,
-                child_hash=configs[-1].provenance.config_hash,
-                merged_hash="",
-                is_valid=False,
-                violations_count=len(all_violations),
-                repairs_count=len(all_repairs),
-                fields_tightened=tuple(),
-                patterns_removed=tuple(),
-                author=author,
-                reason=reason
-            )
-
-            if emit_receipt_flag:
-                try:
-                    emit_receipt(receipt, receipt_path)
-                except Exception:
-                    pass
-
+        if not result.valid:
+            # Merge failed - return with violations
             return MergeResult(
-                merged=None,
-                is_valid=False,
-                violations=tuple(all_violations),
-                repairs_applied=tuple(all_repairs),
-                explanation=result.explanation,
-                receipt=receipt,
-                trace=trace
+                valid=False,
+                merged_config=None,
+                violations=result.violations,
+                policy_diffs=all_policy_diffs,
+                receipt=result.receipt,
             )
 
-        if result.merged:
-            current = result.merged
+        # Continue with merged config as new base
+        current = result.merged_config
 
-    # Compute cumulative tightening
-    cumulative_tightening: Dict[str, Tuple[Any, Any]] = {}
-    for fname in safety_fields:
-        original = original_values[fname]
-        final = getattr(current, fname)
-        if original != final:
-            cumulative_tightening[fname] = (original, final)
+    # Final merge successful
+    final_canonical = json.dumps(current, sort_keys=True, separators=(",", ":"))
+    final_hash = hashlib.sha3_256(final_canonical.encode()).hexdigest()[:16]
 
-    # Build final trace
-    trace = MergeTrace(
-        levels=tuple(levels),
-        per_level_violations={k: tuple(v) for k, v in per_level_violations.items()},
-        per_level_repairs={k: tuple(v) for k, v in per_level_repairs.items()},
-        cumulative_tightening=cumulative_tightening
-    )
-
-    # Build explanation for full chain
-    explanation = _build_explanation(configs[0], configs[-1], current, all_violations)
-
-    # Fields tightened across chain
-    fields_tightened = list(cumulative_tightening.keys())
-
-    # Build final receipt
     timestamp = datetime.now(timezone.utc).isoformat()
-    receipt = MergeReceipt(
-        timestamp=timestamp,
-        receipt_id=_compute_receipt_id(
-            configs[0].provenance.config_hash,
-            configs[-1].provenance.config_hash,
-            timestamp
-        ),
-        parent_hash=configs[0].provenance.config_hash,
-        child_hash=configs[-1].provenance.config_hash,
-        merged_hash=current.provenance.config_hash,
-        is_valid=True,
-        violations_count=len(all_violations),
-        repairs_count=len(all_repairs),
-        fields_tightened=tuple(fields_tightened),
-        patterns_removed=explanation.patterns_removed,
-        author=author,
-        reason=reason
-    )
+    receipt_id = hashlib.sha3_256(f"chain:{final_hash}:{timestamp}".encode()).hexdigest()[:16]
 
-    if emit_receipt_flag:
-        try:
-            emit_receipt(receipt, receipt_path)
-        except Exception as e:
-            warnings.warn(f"Failed to emit merge receipt: {e}", UserWarning, stacklevel=2)
+    # Create final receipt
+    final_receipt = {
+        "type": "merge_receipt",
+        "receipt_id": receipt_id,
+        "timestamp": timestamp,
+        "base_hash": hashlib.sha3_256(
+            json.dumps(configs[0], sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()[:16],
+        "overlay_hash": hashlib.sha3_256(
+            json.dumps(configs[-1], sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()[:16],
+        "merged_hash": final_hash,
+        "valid": True,
+        "violations": [],
+        "warnings": [],
+        "tightened_fields": [],
+    }
 
     return MergeResult(
-        merged=current,
-        is_valid=True,
-        violations=tuple(all_violations),
-        repairs_applied=tuple(all_repairs),
-        explanation=explanation,
-        receipt=receipt,
-        trace=trace
+        valid=True,
+        merged_config=current,
+        violations=[],
+        policy_diffs=all_policy_diffs,
+        receipt=final_receipt,
     )
-
-
-def simulate_merge(
-    parent: QEDConfig,
-    child: QEDConfig
-) -> MergeSimulation:
-    """
-    Preview what merge WOULD produce without committing.
-
-    Enables "dry run" before actual merge - see the result without
-    creating receipts or modifying state.
-
-    Args:
-        parent: Parent config
-        child: Child config
-
-    Returns:
-        MergeSimulation with preview of merge result
-    """
-    # Detect violations
-    violations = _detect_violations(parent, child)
-
-    # Compute available repairs
-    repairs = _compute_repairs(violations, parent) if violations else []
-
-    # Create preview of merged config
-    merged_preview: Optional[QEDConfig] = None
-    try:
-        merged_preview = _create_merged_config(
-            parent, child,
-            repairs=repairs if violations else None,
-            author="simulation",
-            reason="merge simulation"
-        )
-    except Exception:
-        pass
-
-    # Build impact summary
-    would_be_valid = len(violations) == 0 or len(repairs) > 0
-
-    impact_parts = []
-    if not violations:
-        impact_parts.append("Merge would succeed with no violations")
-    else:
-        impact_parts.append(f"{len(violations)} violations detected")
-        if repairs:
-            impact_parts.append(f"{len(repairs)} repairs available")
-
-    # Track what would change
-    if merged_preview:
-        changes = []
-        for fname in ['recall_floor', 'max_fp_rate', 'slo_latency_ms', 'slo_breach_budget']:
-            child_val = getattr(child, fname)
-            merged_val = getattr(merged_preview, fname)
-            if child_val != merged_val:
-                changes.append(f"{fname}: {child_val} -> {merged_val}")
-
-        parent_patterns = set(parent.enabled_patterns) if parent.enabled_patterns else set()
-        child_patterns = set(child.enabled_patterns) if child.enabled_patterns else set()
-        merged_patterns = set(merged_preview.enabled_patterns) if merged_preview.enabled_patterns else set()
-
-        if parent_patterns or child_patterns:
-            removed_count = len((parent_patterns | child_patterns) - merged_patterns)
-            if removed_count:
-                changes.append(f"{removed_count} patterns would be removed")
-
-        if changes:
-            impact_parts.append("Changes: " + "; ".join(changes))
-
-    impact_summary = ". ".join(impact_parts)
-
-    return MergeSimulation(
-        would_be_valid=would_be_valid,
-        merged_preview=merged_preview,
-        violations_preview=tuple(violations),
-        repairs_available=tuple(repairs),
-        impact_summary=impact_summary
-    )
-
-
-def suggest_repairs(
-    parent: QEDConfig,
-    child: QEDConfig
-) -> List[Repair]:
-    """
-    Suggest repairs for violations without applying them.
-
-    Enables "preview mode" before committing - see what WOULD be fixed.
-
-    Args:
-        parent: Parent config
-        child: Child config
-
-    Returns:
-        List of Repair objects that would fix violations
-    """
-    violations = _detect_violations(parent, child)
-    return _compute_repairs(violations, parent)
-
-
-def apply_repairs(
-    child: QEDConfig,
-    repairs: List[Repair],
-    author: str = "merge_rules",
-    reason: str = "applied repairs"
-) -> QEDConfig:
-    """
-    Apply specific repairs to a child config.
-
-    Takes repair suggestions and applies them, returning a new valid config.
-
-    Args:
-        child: Child config to repair
-        repairs: List of repairs to apply
-        author: Who applied repairs (for audit)
-        reason: Why repairs were applied (for audit)
-
-    Returns:
-        New QEDConfig with repairs applied
-    """
-    # Build new config data from child
-    config_data = child.to_dict()
-
-    # Apply each repair
-    for repair in repairs:
-        if repair.field == 'recall_floor':
-            config_data['recall_floor'] = repair.repaired_value
-        elif repair.field == 'max_fp_rate':
-            config_data['max_fp_rate'] = repair.repaired_value
-        elif repair.field == 'slo_latency_ms':
-            config_data['slo_latency_ms'] = repair.repaired_value
-        elif repair.field == 'slo_breach_budget':
-            config_data['slo_breach_budget'] = repair.repaired_value
-        elif repair.field == 'enabled_patterns':
-            config_data['enabled_patterns'] = list(repair.repaired_value)
-        elif repair.field.startswith('regulatory_flags.'):
-            flag_name = repair.field.split('.')[1]
-            if 'regulatory_flags' not in config_data:
-                config_data['regulatory_flags'] = {}
-            config_data['regulatory_flags'][flag_name] = repair.repaired_value
-
-    # Update provenance
-    config_data['provenance'] = ConfigProvenance.create(
-        author=author,
-        reason=reason,
-        parent_hash=child.provenance.config_hash
-    ).to_dict()
-
-    return QEDConfig.from_dict(config_data, validate=True, strict=False)
-
-
-def detect_conflicts(configs: List[QEDConfig]) -> List[Conflict]:
-    """
-    Detect conflicts between N configs that SHOULD be mergeable.
-
-    Pre-flight check before attempting merge chain. Identifies:
-    - Patterns enabled in one config but disabled in another
-    - Regulatory flags required in one but missing in another
-    - Incompatible SLO budgets across configs
-
-    Args:
-        configs: List of configs to check for conflicts
-
-    Returns:
-        List of Conflict objects describing issues found
-    """
-    if len(configs) < 2:
-        return []
-
-    conflicts: List[Conflict] = []
-
-    # Collect all config IDs
-    config_ids = [c.deployment_id for c in configs]
-
-    # Check pattern conflicts
-    all_patterns: Dict[str, List[str]] = {}  # pattern -> list of configs that have it
-    for config in configs:
-        if config.enabled_patterns:
-            for pattern in config.enabled_patterns:
-                if pattern not in all_patterns:
-                    all_patterns[pattern] = []
-                all_patterns[pattern].append(config.deployment_id)
-
-    # Find patterns not in all configs (when patterns are specified)
-    configs_with_patterns = [c for c in configs if c.enabled_patterns]
-    if len(configs_with_patterns) >= 2:
-        for pattern, config_list in all_patterns.items():
-            if len(config_list) < len(configs_with_patterns):
-                missing = [c.deployment_id for c in configs_with_patterns
-                          if c.deployment_id not in config_list]
-                if missing:
-                    conflicts.append(Conflict(
-                        field='enabled_patterns',
-                        configs_involved=tuple(sorted(config_list + missing)),
-                        values={cid: pattern in [p for c in configs if c.deployment_id == cid
-                                                for p in c.enabled_patterns]
-                               for cid in config_list + missing},
-                        resolution_strategy=f"Pattern '{pattern}' will be removed in merge (intersection rule)"
-                    ))
-
-    # Check regulatory flag conflicts
-    all_flags: Dict[str, Dict[str, bool]] = {}  # flag -> {config_id: value}
-    for config in configs:
-        for flag, value in config.regulatory_flags.items():
-            if flag not in all_flags:
-                all_flags[flag] = {}
-            all_flags[flag][config.deployment_id] = value
-
-    for flag, values in all_flags.items():
-        # Check if any config has it True and another has it False/missing
-        has_true = [cid for cid, val in values.items() if val]
-        has_false = [cid for cid in config_ids if cid not in values or not values.get(cid, False)]
-        has_false = [cid for cid in has_false if cid in [c.deployment_id for c in configs]]
-
-        if has_true and has_false:
-            conflicts.append(Conflict(
-                field=f'regulatory_flags.{flag}',
-                configs_involved=tuple(sorted(has_true + has_false)),
-                values={cid: values.get(cid, False) for cid in has_true + has_false},
-                resolution_strategy=f"Flag '{flag}' will be True in merge (OR rule)"
-            ))
-
-    # Check SLO budget incompatibilities
-    # Find configs where SLO budgets vary significantly
-    latencies = [(c.deployment_id, c.slo_latency_ms) for c in configs]
-    breach_budgets = [(c.deployment_id, c.slo_breach_budget) for c in configs]
-
-    # Latency variance check
-    latency_values = [l[1] for l in latencies]
-    if max(latency_values) > min(latency_values) * 3:  # More than 3x variance
-        conflicts.append(Conflict(
-            field='slo_latency_ms',
-            configs_involved=tuple(config_ids),
-            values={cid: lat for cid, lat in latencies},
-            resolution_strategy=f"Will use minimum ({min(latency_values)}ms)"
-        ))
-
-    # Breach budget variance check
-    budget_values = [b[1] for b in breach_budgets]
-    if max(budget_values) > min(budget_values) * 10:  # More than 10x variance
-        conflicts.append(Conflict(
-            field='slo_breach_budget',
-            configs_involved=tuple(config_ids),
-            values={cid: bud for cid, bud in breach_budgets},
-            resolution_strategy=f"Will use minimum ({min(budget_values)})"
-        ))
-
-    return conflicts
