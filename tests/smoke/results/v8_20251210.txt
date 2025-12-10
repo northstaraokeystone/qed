@@ -1,1 +1,477 @@
-v8 tests require pytest - skipping for now
+============================= test session starts ==============================
+platform linux -- Python 3.11.14, pytest-9.0.2, pluggy-1.6.0 -- /usr/local/bin/python3
+cachedir: .pytest_cache
+rootdir: /home/user/qed-v5
+collecting ... collected 62 items
+
+tests/test_qed_v8.py::TestDecisionPacket::test_create_packet_with_required_fields FAILED [  1%]
+tests/test_qed_v8.py::TestDecisionPacket::test_validate_valid_packet FAILED [  3%]
+tests/test_qed_v8.py::TestDecisionPacket::test_validate_packet_missing_fields PASSED [  4%]
+tests/test_qed_v8.py::TestDecisionPacket::test_serialize_deserialize_packet FAILED [  6%]
+tests/test_qed_v8.py::TestDecisionPacket::test_packet_id_changes_with_contents FAILED [  8%]
+tests/test_qed_v8.py::TestDecisionPacket::test_compare_packets_function FAILED [  9%]
+tests/test_qed_v8.py::TestTruthLink::test_build_decision_packet_valid_inputs PASSED [ 11%]
+tests/test_qed_v8.py::TestTruthLink::test_returned_packet_passes_validation PASSED [ 12%]
+tests/test_qed_v8.py::TestTruthLink::test_packet_contains_expected_fields PASSED [ 14%]
+tests/test_qed_v8.py::TestTruthLink::test_missing_manifest_raises_error PASSED [ 16%]
+tests/test_qed_v8.py::TestConfigSchema::test_load_valid_config_from_template PASSED [ 17%]
+tests/test_qed_v8.py::TestConfigSchema::test_validation_completes_under_1ms PASSED [ 19%]
+tests/test_qed_v8.py::TestConfigSchema::test_invalid_config_missing_field_fails PASSED [ 20%]
+tests/test_qed_v8.py::TestConfigSchema::test_invalid_config_wrong_type_fails PASSED [ 22%]
+tests/test_qed_v8.py::TestConfigSchema::test_load_returns_frozen_immutable_config PASSED [ 24%]
+tests/test_qed_v8.py::TestMergeRules::test_merge_global_tesla_tighter_recall_floor SKIPPED [ 25%]
+tests/test_qed_v8.py::TestMergeRules::test_child_loosening_recall_floor_rejected SKIPPED [ 27%]
+tests/test_qed_v8.py::TestMergeRules::test_child_loosening_max_fp_rate_rejected SKIPPED [ 29%]
+tests/test_qed_v8.py::TestMergeRules::test_regulatory_flags_merge_with_or SKIPPED [ 30%]
+tests/test_qed_v8.py::TestMergeRules::test_enabled_patterns_merge_with_intersection SKIPPED [ 32%]
+tests/test_qed_v8.py::TestMergeRules::test_merge_produces_receipt_for_audit SKIPPED [ 33%]
+tests/test_qed_v8.py::TestMeshViewV3::test_build_deployment_graph_from_packets FAILED [ 35%]
+tests/test_qed_v8.py::TestMeshViewV3::test_deployments_sharing_patterns_connected FAILED [ 37%]
+tests/test_qed_v8.py::TestMeshViewV3::test_find_reuse_clusters_returns_groups FAILED [ 38%]
+tests/test_qed_v8.py::TestMeshViewV3::test_empty_packets_list_returns_empty_graph FAILED [ 40%]
+tests/test_qed_v8.py::TestProofV8Subcommands::test_import_proof_module_successfully FAILED [ 41%]
+tests/test_qed_v8.py::TestProofV8Subcommands::test_build_packet_subcommand_exists SKIPPED [ 43%]
+tests/test_qed_v8.py::TestProofV8Subcommands::test_validate_config_subcommand_exists SKIPPED [ 45%]
+tests/test_qed_v8.py::TestProofV8Subcommands::test_merge_configs_subcommand_exists SKIPPED [ 46%]
+tests/test_qed_v8.py::TestProofV8Subcommands::test_compare_packets_subcommand_exists SKIPPED [ 48%]
+tests/test_qed_v8.py::TestProofV8Subcommands::test_fleet_view_subcommand_exists SKIPPED [ 50%]
+tests/smoke/test_smoke_v8.py::TestG1ModuleImports::test_g1_qed_core_imports PASSED [ 51%]
+tests/smoke/test_smoke_v8.py::TestG1ModuleImports::test_g1_qed_process_window_exists PASSED [ 53%]
+tests/smoke/test_smoke_v8.py::TestG1ModuleImports::test_g1_edge_lab_v1_imports PASSED [ 54%]
+tests/smoke/test_smoke_v8.py::TestG1ModuleImports::test_g1_edge_lab_v1_run_scenarios_exists PASSED [ 56%]
+tests/smoke/test_smoke_v8.py::TestG1ModuleImports::test_g1_mesh_view_v1_imports PASSED [ 58%]
+tests/smoke/test_smoke_v8.py::TestG1ModuleImports::test_g1_mesh_view_v1_load_manifest_exists PASSED [ 59%]
+tests/smoke/test_smoke_v8.py::TestG1ModuleImports::test_g1_proof_imports SKIPPED [ 61%]
+tests/smoke/test_smoke_v8.py::TestG1ModuleImports::test_g1_decision_packet_imports PASSED [ 62%]
+tests/smoke/test_smoke_v8.py::TestG1ModuleImports::test_g1_truthlink_imports PASSED [ 64%]
+tests/smoke/test_smoke_v8.py::TestG1ModuleImports::test_g1_config_schema_imports PASSED [ 66%]
+tests/smoke/test_smoke_v8.py::TestG1ModuleImports::test_g1_merge_rules_imports PASSED [ 67%]
+tests/smoke/test_smoke_v8.py::TestG1ModuleImports::test_g1_mesh_view_v3_imports PASSED [ 69%]
+tests/smoke/test_smoke_v8.py::TestG2CoreExports::test_g2_decision_packet_class_exists PASSED [ 70%]
+tests/smoke/test_smoke_v8.py::TestG2CoreExports::test_g2_truthlink_build_exists PASSED [ 72%]
+tests/smoke/test_smoke_v8.py::TestG2CoreExports::test_g2_qedconfig_class_exists PASSED [ 74%]
+tests/smoke/test_smoke_v8.py::TestG2CoreExports::test_g2_config_load_exists PASSED [ 75%]
+tests/smoke/test_smoke_v8.py::TestG2CoreExports::test_g2_merge_configs_exists PASSED [ 77%]
+tests/smoke/test_smoke_v8.py::TestG2CoreExports::test_g2_decision_packet_has_required_fields PASSED [ 79%]
+tests/smoke/test_smoke_v8.py::TestG3ConfigPerformance::test_g3_config_validation_under_1ms_median PASSED [ 80%]
+tests/smoke/test_smoke_v8.py::TestG3ConfigPerformance::test_g3_single_validation_under_1ms PASSED [ 82%]
+tests/smoke/test_smoke_v8.py::TestG4MergeRulesRejectLoosening::test_g4_reject_loosening_recall_floor SKIPPED [ 83%]
+tests/smoke/test_smoke_v8.py::TestG4MergeRulesRejectLoosening::test_g4_reject_loosening_max_fp_rate PASSED [ 85%]
+tests/smoke/test_smoke_v8.py::TestG4MergeRulesRejectLoosening::test_g4_allow_tightening_recall_floor SKIPPED [ 87%]
+tests/smoke/test_smoke_v8.py::TestG5ProofV8Subcommands::test_g5_proof_module_imports SKIPPED [ 88%]
+tests/smoke/test_smoke_v8.py::TestG5ProofV8Subcommands::test_g5_proof_help_exits_cleanly FAILED [ 90%]
+tests/smoke/test_smoke_v8.py::TestG5ProofV8Subcommands::test_g5_proof_has_subcommand_structure FAILED [ 91%]
+tests/smoke/test_smoke_v8.py::TestG5ProofV8Subcommands::test_g5_build_packet_subcommand_exists SKIPPED [ 93%]
+tests/smoke/test_smoke_v8.py::TestG5ProofV8Subcommands::test_g5_validate_config_subcommand_exists SKIPPED [ 95%]
+tests/smoke/test_smoke_v8.py::TestG5ProofV8Subcommands::test_g5_merge_configs_subcommand_exists SKIPPED [ 96%]
+tests/smoke/test_smoke_v8.py::TestG5ProofV8Subcommands::test_g5_compare_packets_subcommand_exists SKIPPED [ 98%]
+tests/smoke/test_smoke_v8.py::TestG5ProofV8Subcommands::test_g5_fleet_view_subcommand_exists SKIPPED [100%]
+
+=================================== FAILURES ===================================
+__________ TestDecisionPacket.test_create_packet_with_required_fields __________
+
+self = <tests.test_qed_v8.TestDecisionPacket object at 0x7ede7e6304d0>
+sample_decision_packet_dict = {'config_hash': 'abc123', 'created_at': '2024-01-01T00:00:00Z', 'deployment_id': 'tesla_prod_001', 'hook': 'tesla', ...}
+
+    def test_create_packet_with_required_fields(self, sample_decision_packet_dict):
+        """Create packet with all required fields, verify packet_id generated."""
+>       packet = DecisionPacket(**sample_decision_packet_dict)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       TypeError: DecisionPacket.__init__() got an unexpected keyword argument 'version'
+
+tests/test_qed_v8.py:171: TypeError
+________________ TestDecisionPacket.test_validate_valid_packet _________________
+
+self = <tests.test_qed_v8.TestDecisionPacket object at 0x7ede7e631150>
+sample_decision_packet_dict = {'config_hash': 'abc123', 'created_at': '2024-01-01T00:00:00Z', 'deployment_id': 'tesla_prod_001', 'hook': 'tesla', ...}
+
+    def test_validate_valid_packet(self, sample_decision_packet_dict):
+        """Validate valid packet returns True."""
+>       packet = DecisionPacket(**sample_decision_packet_dict)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       TypeError: DecisionPacket.__init__() got an unexpected keyword argument 'version'
+
+tests/test_qed_v8.py:180: TypeError
+_____________ TestDecisionPacket.test_serialize_deserialize_packet _____________
+
+self = <tests.test_qed_v8.TestDecisionPacket object at 0x7ede7e631f90>
+sample_decision_packet_dict = {'config_hash': 'abc123', 'created_at': '2024-01-01T00:00:00Z', 'deployment_id': 'tesla_prod_001', 'hook': 'tesla', ...}
+tmp_path = PosixPath('/tmp/pytest-of-root/pytest-1/test_serialize_deserialize_pac0')
+
+    def test_serialize_deserialize_packet(self, sample_decision_packet_dict, tmp_path):
+        """Serialize to JSON, deserialize back, verify equality."""
+>       packet = DecisionPacket(**sample_decision_packet_dict)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       TypeError: DecisionPacket.__init__() got an unexpected keyword argument 'version'
+
+tests/test_qed_v8.py:200: TypeError
+___________ TestDecisionPacket.test_packet_id_changes_with_contents ____________
+
+self = <tests.test_qed_v8.TestDecisionPacket object at 0x7ede7e632610>
+sample_decision_packet_dict = {'config_hash': 'abc123', 'created_at': '2024-01-01T00:00:00Z', 'deployment_id': 'tesla_prod_001', 'hook': 'tesla', ...}
+
+    def test_packet_id_changes_with_contents(self, sample_decision_packet_dict):
+        """Verify packet_id changes when contents change (hash integrity)."""
+>       packet1 = DecisionPacket(**sample_decision_packet_dict)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       TypeError: DecisionPacket.__init__() got an unexpected keyword argument 'version'
+
+tests/test_qed_v8.py:217: TypeError
+_______________ TestDecisionPacket.test_compare_packets_function _______________
+
+self = <tests.test_qed_v8.TestDecisionPacket object at 0x7ede7e632c90>
+sample_decision_packet_dict = {'config_hash': 'abc123', 'created_at': '2024-01-01T00:00:00Z', 'deployment_id': 'tesla_prod_001', 'hook': 'tesla', ...}
+
+    def test_compare_packets_function(self, sample_decision_packet_dict):
+        """Test compare_packets function returns comparison string."""
+>       packet1 = DecisionPacket(**sample_decision_packet_dict)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       TypeError: DecisionPacket.__init__() got an unexpected keyword argument 'version'
+
+tests/test_qed_v8.py:230: TypeError
+___________ TestMeshViewV3.test_build_deployment_graph_from_packets ____________
+
+self = <tests.test_qed_v8.TestMeshViewV3 object at 0x7ede7e63ca10>
+tmp_path = PosixPath('/tmp/pytest-of-root/pytest-1/test_build_deployment_graph_fr0')
+
+    def test_build_deployment_graph_from_packets(self, tmp_path):
+        """Load multiple packets, build_deployment_graph returns graph object."""
+        # Create sample packet files
+        packet1 = {
+            "packet_id": "p001",
+            "deployment_id": "deploy1",
+            "hook": "tesla",
+            "patterns": ["PAT_BATTERY_001", "PAT_THERMAL_001"],
+            "config_hash": "abc123",
+            "created_at": "2024-01-01T00:00:00Z",
+        }
+    
+        packet2 = {
+            "packet_id": "p002",
+            "deployment_id": "deploy2",
+            "hook": "spacex",
+            "patterns": ["PAT_BATTERY_001"],  # Shared pattern
+            "config_hash": "def456",
+            "created_at": "2024-01-02T00:00:00Z",
+        }
+    
+        packets_dir = tmp_path / "packets"
+        packets_dir.mkdir()
+    
+        with open(packets_dir / "packet1.json", "w") as f:
+            json.dump(packet1, f)
+        with open(packets_dir / "packet2.json", "w") as f:
+            json.dump(packet2, f)
+    
+        # Build graph
+>       graph = mesh_build(packets_dir=str(packets_dir))
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       TypeError: build() got an unexpected keyword argument 'packets_dir'
+
+tests/test_qed_v8.py:587: TypeError
+__________ TestMeshViewV3.test_deployments_sharing_patterns_connected __________
+
+self = <tests.test_qed_v8.TestMeshViewV3 object at 0x7ede7e63d0d0>
+tmp_path = PosixPath('/tmp/pytest-of-root/pytest-1/test_deployments_sharing_patte0')
+
+    def test_deployments_sharing_patterns_connected(self, tmp_path):
+        """Deployments sharing patterns are connected."""
+        # Create packets with shared patterns
+        packets_dir = tmp_path / "packets"
+        packets_dir.mkdir()
+    
+        packet1 = {
+            "packet_id": "p001",
+            "deployment_id": "deploy1",
+            "hook": "tesla",
+            "patterns": ["PAT_SHARED"],
+            "created_at": "2024-01-01T00:00:00Z",
+        }
+    
+        packet2 = {
+            "packet_id": "p002",
+            "deployment_id": "deploy2",
+            "hook": "spacex",
+            "patterns": ["PAT_SHARED"],
+            "created_at": "2024-01-01T00:00:00Z",
+        }
+    
+        with open(packets_dir / "p1.json", "w") as f:
+            json.dump(packet1, f)
+        with open(packets_dir / "p2.json", "w") as f:
+            json.dump(packet2, f)
+    
+>       graph = mesh_build(packets_dir=str(packets_dir))
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       TypeError: build() got an unexpected keyword argument 'packets_dir'
+
+tests/test_qed_v8.py:620: TypeError
+____________ TestMeshViewV3.test_find_reuse_clusters_returns_groups ____________
+
+self = <tests.test_qed_v8.TestMeshViewV3 object at 0x7ede7e63d850>
+tmp_path = PosixPath('/tmp/pytest-of-root/pytest-1/test_find_reuse_clusters_retur0')
+
+    def test_find_reuse_clusters_returns_groups(self, tmp_path):
+        """find_reuse_clusters returns list of deployment groups."""
+        # Create packets with clustering potential
+        packets_dir = tmp_path / "packets"
+        packets_dir.mkdir()
+    
+        # Create 3 packets with some shared patterns
+        for i in range(3):
+            packet = {
+                "packet_id": f"p{i:03d}",
+                "deployment_id": f"deploy{i}",
+                "hook": "tesla",
+                "patterns": ["PAT_COMMON", f"PAT_{i}"],
+                "created_at": "2024-01-01T00:00:00Z",
+            }
+            with open(packets_dir / f"p{i}.json", "w") as f:
+                json.dump(packet, f)
+    
+>       graph = mesh_build(packets_dir=str(packets_dir))
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       TypeError: build() got an unexpected keyword argument 'packets_dir'
+
+tests/test_qed_v8.py:644: TypeError
+__________ TestMeshViewV3.test_empty_packets_list_returns_empty_graph __________
+
+self = <tests.test_qed_v8.TestMeshViewV3 object at 0x7ede7e63e010>
+tmp_path = PosixPath('/tmp/pytest-of-root/pytest-1/test_empty_packets_list_return0')
+
+    def test_empty_packets_list_returns_empty_graph(self, tmp_path):
+        """Empty packets list returns empty graph (no crash)."""
+        empty_dir = tmp_path / "empty_packets"
+        empty_dir.mkdir()
+    
+        # Build graph with no packets
+>       graph = mesh_build(packets_dir=str(empty_dir))
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       TypeError: build() got an unexpected keyword argument 'packets_dir'
+
+tests/test_qed_v8.py:655: TypeError
+_________ TestProofV8Subcommands.test_import_proof_module_successfully _________
+
+self = <tests.test_qed_v8.TestProofV8Subcommands object at 0x7ede7e63e790>
+
+    def test_import_proof_module_successfully(self):
+        """Import proof module successfully."""
+>       import proof
+
+tests/test_qed_v8.py:673: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    from __future__ import annotations
+    
+    import argparse
+    import json
+    import sys
+    import time
+    from pathlib import Path
+    from typing import Any, Dict, List, Optional
+    
+    # Third-party imports
+    import numpy as np
+>   from scipy.stats import beta
+E   ModuleNotFoundError: No module named 'scipy'
+
+proof.py:12: ModuleNotFoundError
+__________ TestG5ProofV8Subcommands.test_g5_proof_help_exits_cleanly ___________
+
+self = <tests.smoke.test_smoke_v8.TestG5ProofV8Subcommands object at 0x7ede7bd0b8d0>
+
+    def test_g5_proof_help_exits_cleanly(self):
+        """proof.py --help exits with code 0."""
+        result = subprocess.run(
+            [sys.executable, "proof.py", "--help"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+>       assert result.returncode == 0, (
+            f"proof.py --help should exit 0, got {result.returncode}\n"
+            f"stderr: {result.stderr}"
+        )
+E       AssertionError: proof.py --help should exit 0, got 1
+E         stderr: Traceback (most recent call last):
+E           File "/home/user/qed-v5/proof.py", line 12, in <module>
+E             from scipy.stats import beta
+E         ModuleNotFoundError: No module named 'scipy'
+E         
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['/usr/local/bin/python3', 'proof.py', '--help'], returncode=1, stdout='', stderr='Traceback (most recent call last):\n  File "/home/user/qed-v5/proof.py", line 12, in <module>\n    from scipy.stats import beta\nModuleNotFoundError: No module named \'scipy\'\n').returncode
+
+tests/smoke/test_smoke_v8.py:550: AssertionError
+_______ TestG5ProofV8Subcommands.test_g5_proof_has_subcommand_structure ________
+
+self = <tests.smoke.test_smoke_v8.TestG5ProofV8Subcommands object at 0x7ede7bd0bf10>
+
+    def test_g5_proof_has_subcommand_structure(self):
+        """proof.py has argparse subcommand structure."""
+        result = subprocess.run(
+            [sys.executable, "proof.py", "--help"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        # Check for subcommand indicators in help output
+        help_text = result.stdout.lower()
+        has_subcommands = (
+            "commands" in help_text or
+            "subcommands" in help_text or
+            "{" in help_text or  # argparse lists choices
+            "gates" in help_text or  # known existing command
+            "replay" in help_text
+        )
+>       assert has_subcommands, (
+            f"proof.py should have subcommand structure. Help output:\n{result.stdout}"
+        )
+E       AssertionError: proof.py should have subcommand structure. Help output:
+E         
+E       assert False
+
+tests/smoke/test_smoke_v8.py:572: AssertionError
+=============================== warnings summary ===============================
+tests/test_qed_v8.py::TestConfigSchema::test_load_valid_config_from_template
+  /home/user/qed-v5/tests/test_qed_v8.py:325: UserWarning: QEDConfig: Unknown safety_override key: steering_torque_nm
+    config = config_load(config_path)
+
+tests/test_qed_v8.py::TestConfigSchema::test_load_valid_config_from_template
+  /home/user/qed-v5/tests/test_qed_v8.py:325: UserWarning: QEDConfig: Unknown safety_override key: brake_pressure_bar
+    config = config_load(config_path)
+
+tests/test_qed_v8.py::TestConfigSchema::test_load_valid_config_from_template
+  /home/user/qed-v5/tests/test_qed_v8.py:325: UserWarning: QEDConfig: Unknown safety_override key: lateral_accel_ms2
+    config = config_load(config_path)
+
+tests/test_qed_v8.py::TestConfigSchema::test_load_valid_config_from_template
+  /home/user/qed-v5/tests/test_qed_v8.py:325: UserWarning: QEDConfig: Unknown safety_override key: battery_delta_t_degc
+    config = config_load(config_path)
+
+tests/test_qed_v8.py::TestConfigSchema::test_validation_completes_under_1ms
+  /home/user/qed-v5/tests/test_qed_v8.py:342: UserWarning: QEDConfig: Unknown safety_override key: steering_torque_nm
+    _ = config_load(config_path)
+
+tests/test_qed_v8.py::TestConfigSchema::test_validation_completes_under_1ms
+  /home/user/qed-v5/tests/test_qed_v8.py:342: UserWarning: QEDConfig: Unknown safety_override key: brake_pressure_bar
+    _ = config_load(config_path)
+
+tests/test_qed_v8.py::TestConfigSchema::test_validation_completes_under_1ms
+  /home/user/qed-v5/tests/test_qed_v8.py:342: UserWarning: QEDConfig: Unknown safety_override key: lateral_accel_ms2
+    _ = config_load(config_path)
+
+tests/test_qed_v8.py::TestConfigSchema::test_validation_completes_under_1ms
+  /home/user/qed-v5/tests/test_qed_v8.py:342: UserWarning: QEDConfig: Unknown safety_override key: battery_delta_t_degc
+    _ = config_load(config_path)
+
+tests/test_qed_v8.py::TestConfigSchema::test_validation_completes_under_1ms
+  /home/user/qed-v5/tests/test_qed_v8.py:346: UserWarning: QEDConfig: Unknown safety_override key: steering_torque_nm
+    config = config_load(config_path)
+
+tests/test_qed_v8.py::TestConfigSchema::test_validation_completes_under_1ms
+  /home/user/qed-v5/tests/test_qed_v8.py:346: UserWarning: QEDConfig: Unknown safety_override key: brake_pressure_bar
+    config = config_load(config_path)
+
+tests/test_qed_v8.py::TestConfigSchema::test_validation_completes_under_1ms
+  /home/user/qed-v5/tests/test_qed_v8.py:346: UserWarning: QEDConfig: Unknown safety_override key: lateral_accel_ms2
+    config = config_load(config_path)
+
+tests/test_qed_v8.py::TestConfigSchema::test_validation_completes_under_1ms
+  /home/user/qed-v5/tests/test_qed_v8.py:346: UserWarning: QEDConfig: Unknown safety_override key: battery_delta_t_degc
+    config = config_load(config_path)
+
+tests/test_qed_v8.py::TestConfigSchema::test_load_returns_frozen_immutable_config
+  /home/user/qed-v5/tests/test_qed_v8.py:395: UserWarning: QEDConfig: Unknown safety_override key: steering_torque_nm
+    config = config_load(config_path)
+
+tests/test_qed_v8.py::TestConfigSchema::test_load_returns_frozen_immutable_config
+  /home/user/qed-v5/tests/test_qed_v8.py:395: UserWarning: QEDConfig: Unknown safety_override key: brake_pressure_bar
+    config = config_load(config_path)
+
+tests/test_qed_v8.py::TestConfigSchema::test_load_returns_frozen_immutable_config
+  /home/user/qed-v5/tests/test_qed_v8.py:395: UserWarning: QEDConfig: Unknown safety_override key: lateral_accel_ms2
+    config = config_load(config_path)
+
+tests/test_qed_v8.py::TestConfigSchema::test_load_returns_frozen_immutable_config
+  /home/user/qed-v5/tests/test_qed_v8.py:395: UserWarning: QEDConfig: Unknown safety_override key: battery_delta_t_degc
+    config = config_load(config_path)
+
+tests/smoke/test_smoke_v8.py::TestG3ConfigPerformance::test_g3_config_validation_under_1ms_median
+  /home/user/qed-v5/tests/smoke/test_smoke_v8.py:263: UserWarning: QEDConfig: Unknown safety_override key: steering_torque_nm
+    _ = load_fn(config_path)
+
+tests/smoke/test_smoke_v8.py::TestG3ConfigPerformance::test_g3_config_validation_under_1ms_median
+  /home/user/qed-v5/tests/smoke/test_smoke_v8.py:263: UserWarning: QEDConfig: Unknown safety_override key: brake_pressure_bar
+    _ = load_fn(config_path)
+
+tests/smoke/test_smoke_v8.py::TestG3ConfigPerformance::test_g3_config_validation_under_1ms_median
+  /home/user/qed-v5/tests/smoke/test_smoke_v8.py:263: UserWarning: QEDConfig: Unknown safety_override key: lateral_accel_ms2
+    _ = load_fn(config_path)
+
+tests/smoke/test_smoke_v8.py::TestG3ConfigPerformance::test_g3_config_validation_under_1ms_median
+  /home/user/qed-v5/tests/smoke/test_smoke_v8.py:263: UserWarning: QEDConfig: Unknown safety_override key: battery_delta_t_degc
+    _ = load_fn(config_path)
+
+tests/smoke/test_smoke_v8.py::TestG3ConfigPerformance::test_g3_config_validation_under_1ms_median
+  /home/user/qed-v5/tests/smoke/test_smoke_v8.py:273: UserWarning: QEDConfig: Unknown safety_override key: steering_torque_nm
+    _ = load_fn(config_path)
+
+tests/smoke/test_smoke_v8.py::TestG3ConfigPerformance::test_g3_config_validation_under_1ms_median
+  /home/user/qed-v5/tests/smoke/test_smoke_v8.py:273: UserWarning: QEDConfig: Unknown safety_override key: brake_pressure_bar
+    _ = load_fn(config_path)
+
+tests/smoke/test_smoke_v8.py::TestG3ConfigPerformance::test_g3_config_validation_under_1ms_median
+  /home/user/qed-v5/tests/smoke/test_smoke_v8.py:273: UserWarning: QEDConfig: Unknown safety_override key: lateral_accel_ms2
+    _ = load_fn(config_path)
+
+tests/smoke/test_smoke_v8.py::TestG3ConfigPerformance::test_g3_config_validation_under_1ms_median
+  /home/user/qed-v5/tests/smoke/test_smoke_v8.py:273: UserWarning: QEDConfig: Unknown safety_override key: battery_delta_t_degc
+    _ = load_fn(config_path)
+
+tests/smoke/test_smoke_v8.py::TestG3ConfigPerformance::test_g3_single_validation_under_1ms
+  /home/user/qed-v5/tests/smoke/test_smoke_v8.py:309: UserWarning: QEDConfig: Unknown safety_override key: steering_torque_nm
+    _ = load_fn(config_path)
+
+tests/smoke/test_smoke_v8.py::TestG3ConfigPerformance::test_g3_single_validation_under_1ms
+  /home/user/qed-v5/tests/smoke/test_smoke_v8.py:309: UserWarning: QEDConfig: Unknown safety_override key: brake_pressure_bar
+    _ = load_fn(config_path)
+
+tests/smoke/test_smoke_v8.py::TestG3ConfigPerformance::test_g3_single_validation_under_1ms
+  /home/user/qed-v5/tests/smoke/test_smoke_v8.py:309: UserWarning: QEDConfig: Unknown safety_override key: lateral_accel_ms2
+    _ = load_fn(config_path)
+
+tests/smoke/test_smoke_v8.py::TestG3ConfigPerformance::test_g3_single_validation_under_1ms
+  /home/user/qed-v5/tests/smoke/test_smoke_v8.py:309: UserWarning: QEDConfig: Unknown safety_override key: battery_delta_t_degc
+    _ = load_fn(config_path)
+
+tests/smoke/test_smoke_v8.py::TestG3ConfigPerformance::test_g3_single_validation_under_1ms
+  /home/user/qed-v5/tests/smoke/test_smoke_v8.py:315: UserWarning: QEDConfig: Unknown safety_override key: steering_torque_nm
+    _ = load_fn(config_path)
+
+tests/smoke/test_smoke_v8.py::TestG3ConfigPerformance::test_g3_single_validation_under_1ms
+  /home/user/qed-v5/tests/smoke/test_smoke_v8.py:315: UserWarning: QEDConfig: Unknown safety_override key: brake_pressure_bar
+    _ = load_fn(config_path)
+
+tests/smoke/test_smoke_v8.py::TestG3ConfigPerformance::test_g3_single_validation_under_1ms
+  /home/user/qed-v5/tests/smoke/test_smoke_v8.py:315: UserWarning: QEDConfig: Unknown safety_override key: lateral_accel_ms2
+    _ = load_fn(config_path)
+
+tests/smoke/test_smoke_v8.py::TestG3ConfigPerformance::test_g3_single_validation_under_1ms
+  /home/user/qed-v5/tests/smoke/test_smoke_v8.py:315: UserWarning: QEDConfig: Unknown safety_override key: battery_delta_t_degc
+    _ = load_fn(config_path)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/test_qed_v8.py::TestDecisionPacket::test_create_packet_with_required_fields
+FAILED tests/test_qed_v8.py::TestDecisionPacket::test_validate_valid_packet
+FAILED tests/test_qed_v8.py::TestDecisionPacket::test_serialize_deserialize_packet
+FAILED tests/test_qed_v8.py::TestDecisionPacket::test_packet_id_changes_with_contents
+FAILED tests/test_qed_v8.py::TestDecisionPacket::test_compare_packets_function
+FAILED tests/test_qed_v8.py::TestMeshViewV3::test_build_deployment_graph_from_packets
+FAILED tests/test_qed_v8.py::TestMeshViewV3::test_deployments_sharing_patterns_connected
+FAILED tests/test_qed_v8.py::TestMeshViewV3::test_find_reuse_clusters_returns_groups
+FAILED tests/test_qed_v8.py::TestMeshViewV3::test_empty_packets_list_returns_empty_graph
+FAILED tests/test_qed_v8.py::TestProofV8Subcommands::test_import_proof_module_successfully
+FAILED tests/smoke/test_smoke_v8.py::TestG5ProofV8Subcommands::test_g5_proof_help_exits_cleanly
+FAILED tests/smoke/test_smoke_v8.py::TestG5ProofV8Subcommands::test_g5_proof_has_subcommand_structure
+============ 12 failed, 30 passed, 20 skipped, 32 warnings in 1.63s ============
