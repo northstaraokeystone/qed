@@ -1,0 +1,26 @@
+{
+  "version": "1.0",
+  "deployment_id": "tesla-prod",
+  "hook": "tesla",
+  "recall_floor": 0.9995,
+  "max_fp_rate": 0.005,
+  "slo_latency_ms": 50,
+  "slo_breach_budget": 0.001,
+  "compression_target": 10.0,
+  "enabled_patterns": [
+    "PAT_CAN_*",
+    "PAT_BATTERY_*",
+    "PAT_THERMAL_*",
+    "PAT_MOTION_*"
+  ],
+  "safety_overrides": {
+    "steering_torque_nm": 65.0,
+    "brake_pressure_bar": 180.0,
+    "lateral_accel_ms2": 8.5,
+    "battery_delta_t_degc": 12.0
+  },
+  "regulatory_flags": {
+    "NHTSA": true,
+    "ISO26262": true
+  }
+}

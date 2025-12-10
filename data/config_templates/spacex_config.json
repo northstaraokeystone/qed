@@ -1,0 +1,28 @@
+{
+  "version": "1.0",
+  "deployment_id": "spacex-prod",
+  "hook": "spacex",
+  "recall_floor": 0.99995,
+  "max_fp_rate": 0.001,
+  "slo_latency_ms": 10,
+  "slo_breach_budget": 0.0001,
+  "compression_target": 15.0,
+  "enabled_patterns": [
+    "PAT_PROPULSION_*",
+    "PAT_AVIONICS_*",
+    "PAT_THERMAL_*",
+    "PAT_TRAJECTORY_*"
+  ],
+  "safety_overrides": {
+    "chamber_pressure_kpa": 30000.0,
+    "heat_shield_temp_degc": 1485.0,
+    "grid_fin_force_kn": 1020.0,
+    "ullage_pressure_bar": 5.1,
+    "methane_valve_pos_pct": 92.5
+  },
+  "regulatory_flags": {
+    "FAA": true,
+    "ITAR": true,
+    "NASA_NPR": true
+  }
+}
