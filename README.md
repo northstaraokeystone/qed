@@ -125,6 +125,31 @@ Each hook keeps its own normalization formulas and safety classification ladder 
 
 ---
 
+## What's new in v9
+
+v9 is a paradigm shift: less code, more capability. Measured by what was deleted.
+
+- **Receipt Monad**: All modules are pure transformers with signature `List[Receipt] → List[Receipt]`. No side effects, no internal state. Testing is trivial: input receipts, check output receipts. Replay is free.
+
+- **Value as Topology**: `dollar_value_annual` field deleted. Value is computed from receipt graph centrality (PageRank-style) — never stored. Adding one receipt can change all pattern values.
+
+- **Mode Elimination**: `PatternMode` enum deleted. No LIVE/SHADOW/DEPRECATED state. Mode is a query predicate: `query(graph, actionable=True)` returns "live" patterns. Same pattern can appear differently to different observers.
+
+- **Bidirectional Causality**: Causal graph is a flow network, not a DAG. `trace_forward()` and `trace_backward()` enable counterfactual replay — "what would change if we changed this threshold in the past?"
+
+- **Self-Compression Ratio**: `self_compression_ratio()` measures how well QED understands itself. High compression = simple self-model = healthy system. Sudden drops signal anomalies.
+
+- **Entanglement over Aggregation**: Cross-company patterns are entangled, not summed. `entanglement_coefficient()` replaces portfolio addition. Observing Tesla's pattern P affects SpaceX's view of P — instantaneously at query time.
+
+**What was deleted in v9:**
+- `PatternMode` enum (mode is projection)
+- `dollar_value_annual` stored field (value is topology)
+- DAG assumption in causal graph (bidirectional flow)
+- Sum aggregation in portfolio (entanglement)
+- Fixed 30-day compaction rule (value-aware retention)
+
+---
+
 ## ROI – what the math says
 
 All ROI logic is simple arithmetic on explicit inputs (telemetry volume, storage/network pricing, incident rates, value per event). No dark boxes; formulas are in the domain specs and can be re-run.
