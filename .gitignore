@@ -9,3 +9,6 @@ CLAUDEME.md
 
 # DecisionPacket files (runtime artifacts)
 data/packets/*.jsonl
+
+# Merge receipt logs (test artifacts)
+merge_receipts.jsonl
