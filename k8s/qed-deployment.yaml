@@ -36,6 +36,40 @@ spec:
       storage: 1Gi
   # storageClassName: standard  # Uncomment and set for production
 ---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: qed-packets-pvc
+  namespace: qed-system
+  labels:
+    app: qed-hooks
+    version: v8
+    purpose: audit-artifacts
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+  # storageClassName: standard  # Uncomment and set for production - same class as qed-data-pvc for consistent backup
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: qed-config-templates-pvc
+  namespace: qed-system
+  labels:
+    app: qed-hooks
+    version: v8
+    purpose: config-templates
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 100Mi
+  # storageClassName: standard  # Uncomment and set for production
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -149,7 +183,21 @@ spec:
       - name: qed-hooks
         image: ghcr.io/xai/qed-v5:{{TAG}}
         imagePullPolicy: IfNotPresent
+        volumeMounts:
+        - name: qed-packets
+          mountPath: /data/packets
+        - name: qed-config-templates
+          mountPath: /data/config_templates
+          readOnly: true
         env:
+        # v8 Deployment configuration
+        - name: DEPLOYMENT_ID
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: CONFIG_PATH
+          value: "/data/config_templates/global_config.json"
+        # Runtime configuration
         - name: QED_VERSION
           value: "7.0.0"
         - name: PYTHONDONTWRITEBYTECODE
@@ -195,6 +243,50 @@ spec:
           runAsUser: 1000
           runAsGroup: 1000
           readOnlyRootFilesystem: true
+      volumes:
+      - name: qed-packets
+        persistentVolumeClaim:
+          claimName: qed-packets-pvc
+      - name: qed-config-templates
+        persistentVolumeClaim:
+          claimName: qed-config-templates-pvc
+      # Init container to validate CONFIG_PATH before starting main container
+      initContainers:
+      - name: validate-config
+        image: busybox:1.36
+        command:
+        - sh
+        - -c
+        - |
+          set -e
+          CONFIG_PATH="/data/config_templates/global_config.json"
+
+          # Check if config file exists
+          if [ ! -f "$CONFIG_PATH" ]; then
+            echo "ERROR: CONFIG_PATH file does not exist: $CONFIG_PATH"
+            exit 1
+          fi
+
+          # Basic JSON validation (check if file is readable and non-empty)
+          if [ ! -s "$CONFIG_PATH" ]; then
+            echo "ERROR: CONFIG_PATH file is empty: $CONFIG_PATH"
+            exit 1
+          fi
+
+          # Ensure packets directory exists
+          mkdir -p /data/packets
+
+          echo "Configuration validated successfully"
+          echo "CONFIG_PATH: $CONFIG_PATH"
+        volumeMounts:
+        - name: qed-config-templates
+          mountPath: /data/config_templates
+          readOnly: true
+        - name: qed-packets
+          mountPath: /data/packets
+        securityContext:
+          runAsUser: 1000
+          runAsGroup: 1000
 ---
 apiVersion: v1
 kind: Service
