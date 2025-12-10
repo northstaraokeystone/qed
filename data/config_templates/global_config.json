@@ -1,0 +1,13 @@
+{
+  "version": "1.0",
+  "deployment_id": "global",
+  "hook": null,
+  "recall_floor": 0.999,
+  "max_fp_rate": 0.01,
+  "slo_latency_ms": 100,
+  "slo_breach_budget": 0.005,
+  "compression_target": 10.0,
+  "enabled_patterns": [],
+  "safety_overrides": {},
+  "regulatory_flags": {}
+}
