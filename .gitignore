@@ -6,3 +6,6 @@ __pycache__/
 .idea/
 .DS_Store
 CLAUDEME.md
+
+# DecisionPacket files (runtime artifacts)
+data/packets/*.jsonl
