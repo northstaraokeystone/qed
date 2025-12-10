@@ -34,6 +34,20 @@ from clarity_clean_adapter import process_receipts
 from edge_lab_v2 import run_pattern_sims
 from shared_anomalies import load_library
 
+# v9 imports for new subcommands
+from causal_graph import (
+    centrality,
+    trace_forward,
+    trace_backward,
+    self_compression_ratio,
+    entanglement_coefficient,
+    build_graph,
+)
+from event_stream import replay as event_replay, query as event_query
+from binder import QueryPredicate
+from portfolio_aggregator import portfolio_health
+import networkx as nx
+
 # --- KPI Thresholds ---
 KPI_RECALL_THRESHOLD = 0.9967  # 99.67% recall CI
 KPI_PRECISION_THRESHOLD = 0.95  # 95% precision
@@ -832,13 +846,985 @@ def clarity_audit(
     }
 
 
+# --- v9 Helper Functions ---
+
+
+def _emit_cli_receipt(
+    subcommand: str,
+    args: Dict[str, Any],
+    result: Dict[str, Any],
+    exit_code: int,
+    receipts_path: str = "data/receipts.jsonl",
+) -> None:
+    """
+    Emit cli_receipt to JSONL log (CLAUDEME.md Section 5.2 compliance).
+
+    Every CLI action emits a receipt for auditability.
+
+    Args:
+        subcommand: Subcommand name (value, trace-forward, etc.)
+        args: Arguments passed to subcommand
+        result: Result dict from subcommand execution
+        exit_code: Exit code (0=success, 1=not found, 2=error)
+        receipts_path: Path to receipts JSONL file
+    """
+    receipt = {
+        "type": "cli_receipt",
+        "subcommand": subcommand,
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "args": args,
+        "result": result,
+        "exit_code": exit_code,
+    }
+
+    output_path = Path(receipts_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open("a") as f:
+        f.write(json.dumps(receipt) + "\n")
+
+
+def _load_graph(graph_path: str = "data/graph") -> nx.DiGraph:
+    """
+    Load graph from receipts or build from available data.
+
+    Args:
+        graph_path: Directory containing graph data
+
+    Returns:
+        NetworkX DiGraph, or empty graph if no data
+    """
+    # Try to load from receipts.jsonl
+    receipts_file = Path("data/receipts.jsonl")
+    if receipts_file.exists():
+        receipts = []
+        with receipts_file.open("r") as f:
+            for line in f:
+                if line.strip():
+                    receipts.append(json.loads(line))
+        if receipts:
+            return build_graph(receipts)
+
+    # Return empty graph if no data
+    return nx.DiGraph()
+
+
+def _ascii_box(title: str, lines: List[str], width: int = 60) -> str:
+    """
+    Create ASCII box with Unicode box drawing characters.
+
+    Args:
+        title: Box title
+        lines: Content lines
+        width: Box width in characters
+
+    Returns:
+        Multi-line ASCII art string
+    """
+    # Box drawing characters
+    top_left = "╭"
+    top_right = "╮"
+    bottom_left = "╰"
+    bottom_right = "╯"
+    horizontal = "─"
+    vertical = "│"
+
+    # Build box
+    result = []
+
+    # Top border with title
+    title_line = f"─ {title} "
+    title_padding = horizontal * (width - len(title_line) - 2)
+    result.append(f"{top_left}{title_line}{title_padding}{top_right}")
+
+    # Content lines
+    for line in lines:
+        # Truncate or pad to fit
+        if len(line) > width - 2:
+            line = line[: width - 5] + "..."
+        padding = " " * (width - len(line) - 2)
+        result.append(f"{vertical} {line}{padding}{vertical}")
+
+    # Bottom border
+    result.append(f"{bottom_left}{horizontal * (width - 2)}{bottom_right}")
+
+    return "\n".join(result)
+
+
+# --- v9 Subcommands ---
+
+
+def cmd_value(
+    pattern_id: str,
+    graph_path: str = "data/graph",
+    output_json: bool = False,
+    quiet: bool = False,
+) -> int:
+    """
+    Auditor Question: "What is this pattern worth?"
+
+    Computes centrality via graph topology (v9 Paradigm 2: Value is Topology).
+    No stored dollar fields - value always derived from current graph.
+
+    Args:
+        pattern_id: Pattern to compute value for
+        graph_path: Path to graph data directory
+        output_json: Output as JSON instead of ASCII
+        quiet: Suppress ASCII decorations
+
+    Returns:
+        Exit code: 0=found, 1=not found, 2=graph error
+    """
+    try:
+        graph = _load_graph(graph_path)
+
+        if graph.number_of_nodes() == 0:
+            result = {"error": "Empty graph - no data to compute centrality"}
+            _emit_cli_receipt("value", {"pattern_id": pattern_id}, result, 2)
+            if output_json:
+                print(json.dumps(result))
+            else:
+                print(f"ERROR: {result['error']}")
+            return 2
+
+        cent = centrality(pattern_id, graph)
+
+        if cent == 0.0 and pattern_id not in graph:
+            result = {"error": f"Pattern '{pattern_id}' not found in graph"}
+            _emit_cli_receipt("value", {"pattern_id": pattern_id}, result, 1)
+            if output_json:
+                print(json.dumps(result))
+            else:
+                print(f"ERROR: {result['error']}")
+            return 1
+
+        # Count connected patterns
+        if pattern_id in graph:
+            upstream = len(list(graph.predecessors(pattern_id)))
+            downstream = len(list(graph.successors(pattern_id)))
+        else:
+            upstream = 0
+            downstream = 0
+
+        # Determine status vs CENTRALITY_FLOOR (0.2)
+        floor = 0.2
+        status = "ABOVE FLOOR" if cent >= floor else "BELOW FLOOR"
+
+        result = {
+            "pattern_id": pattern_id,
+            "centrality": round(cent, 3),
+            "status": status,
+            "floor": floor,
+            "connected_upstream": upstream,
+            "connected_downstream": downstream,
+        }
+
+        _emit_cli_receipt("value", {"pattern_id": pattern_id}, result, 0)
+
+        if output_json:
+            print(json.dumps(result, indent=2))
+        else:
+            lines = [
+                f"Pattern: {pattern_id}",
+                f"Centrality: {cent:.3f}",
+                f"Status: {status} (floor={floor})",
+                f"Connected patterns: {upstream} upstream, {downstream} downstream",
+            ]
+            print(_ascii_box("Pattern Value", lines))
+            print(f"Next: proof trace-forward {pattern_id}")
+
+        return 0
+
+    except Exception as e:
+        result = {"error": str(e)}
+        _emit_cli_receipt("value", {"pattern_id": pattern_id}, result, 2)
+        if output_json:
+            print(json.dumps(result))
+        else:
+            print(f"ERROR: {e}")
+        return 2
+
+
+def cmd_trace_forward(
+    node_id: str,
+    depth: int = 3,
+    graph_path: str = "data/graph",
+    output_json: bool = False,
+    quiet: bool = False,
+) -> int:
+    """
+    Auditor Question: "What would change if we changed this?"
+
+    Forward causality for blast radius analysis (v9 Paradigm 4).
+
+    Args:
+        node_id: Starting node ID
+        depth: Maximum depth to traverse (default 3, max 10)
+        graph_path: Path to graph data directory
+        output_json: Output as JSON instead of ASCII
+        quiet: Suppress ASCII decorations
+
+    Returns:
+        Exit code: 0=found, 1=node not found, 2=graph error
+    """
+    try:
+        graph = _load_graph(graph_path)
+
+        if graph.number_of_nodes() == 0:
+            result = {"error": "Empty graph - no data to trace"}
+            _emit_cli_receipt("trace-forward", {"node_id": node_id, "depth": depth}, result, 2)
+            if output_json:
+                print(json.dumps(result))
+            else:
+                print(f"ERROR: {result['error']}")
+            return 2
+
+        if node_id not in graph:
+            result = {"error": f"Node '{node_id}' not found in graph"}
+            _emit_cli_receipt("trace-forward", {"node_id": node_id, "depth": depth}, result, 1)
+            if output_json:
+                print(json.dumps(result))
+            else:
+                print(f"ERROR: {result['error']}")
+            return 1
+
+        # Clamp depth to max 10
+        depth = min(depth, 10)
+
+        # Trace forward
+        affected = trace_forward(node_id, graph, max_depth=100)
+
+        # Group by depth for display
+        depth_groups: Dict[int, List[str]] = {}
+        for node in affected[:depth * 3]:  # Limit display
+            # Compute shortest path length to get depth
+            try:
+                path_len = nx.shortest_path_length(graph, node_id, node)
+            except nx.NetworkXNoPath:
+                path_len = depth + 1  # Beyond max depth
+
+            if path_len <= depth:
+                if path_len not in depth_groups:
+                    depth_groups[path_len] = []
+                depth_groups[path_len].append(node)
+
+        # Compute max downstream centrality
+        max_cent = 0.0
+        for node in affected[:10]:  # Check top 10
+            cent = centrality(node, graph)
+            max_cent = max(max_cent, cent)
+
+        result = {
+            "node_id": node_id,
+            "depth": depth,
+            "affected_count": len(affected),
+            "depth_groups": {str(k): v for k, v in depth_groups.items()},
+            "max_downstream_centrality": round(max_cent, 3),
+        }
+
+        _emit_cli_receipt("trace-forward", {"node_id": node_id, "depth": depth}, result, 0)
+
+        if output_json:
+            print(json.dumps(result, indent=2))
+        else:
+            lines = []
+            for d in sorted(depth_groups.keys()):
+                nodes = depth_groups[d]
+                for node in nodes[:2]:  # Show max 2 per depth
+                    cent = centrality(node, graph)
+                    lines.append(f"Depth {d}: {node} (centrality={cent:.2f})")
+
+            lines.append("")
+            lines.append(f"Blast radius: {len(affected)} patterns affected")
+            lines.append(f"Max downstream centrality: {max_cent:.2f}")
+
+            print(_ascii_box(f"Forward Trace: {node_id}", lines))
+
+            # Suggest next command
+            if affected:
+                print(f"Next: proof trace-backward {affected[0]}")
+            else:
+                print(f"Next: proof value {node_id}")
+
+        return 0
+
+    except Exception as e:
+        result = {"error": str(e)}
+        _emit_cli_receipt("trace-forward", {"node_id": node_id, "depth": depth}, result, 2)
+        if output_json:
+            print(json.dumps(result))
+        else:
+            print(f"ERROR: {e}")
+        return 2
+
+
+def cmd_trace_backward(
+    node_id: str,
+    depth: int = 3,
+    graph_path: str = "data/graph",
+    output_json: bool = False,
+    quiet: bool = False,
+) -> int:
+    """
+    Auditor Question: "How did this decision get made?"
+
+    Backward causality for root cause analysis (v9 Paradigm 4).
+
+    Args:
+        node_id: Starting node ID
+        depth: Maximum depth to traverse (default 3, max 10)
+        graph_path: Path to graph data directory
+        output_json: Output as JSON instead of ASCII
+        quiet: Suppress ASCII decorations
+
+    Returns:
+        Exit code: 0=found, 1=node not found, 2=graph error
+    """
+    try:
+        graph = _load_graph(graph_path)
+
+        if graph.number_of_nodes() == 0:
+            result = {"error": "Empty graph - no data to trace"}
+            _emit_cli_receipt("trace-backward", {"node_id": node_id, "depth": depth}, result, 2)
+            if output_json:
+                print(json.dumps(result))
+            else:
+                print(f"ERROR: {result['error']}")
+            return 2
+
+        if node_id not in graph:
+            result = {"error": f"Node '{node_id}' not found in graph"}
+            _emit_cli_receipt("trace-backward", {"node_id": node_id, "depth": depth}, result, 1)
+            if output_json:
+                print(json.dumps(result))
+            else:
+                print(f"ERROR: {result['error']}")
+            return 1
+
+        # Clamp depth to max 10
+        depth = min(depth, 10)
+
+        # Trace backward
+        causes = trace_backward(node_id, graph, max_depth=100)
+
+        # Group by depth for display
+        depth_groups: Dict[int, List[str]] = {}
+        for node in causes[:depth * 3]:  # Limit display
+            # Compute shortest path length to get depth
+            try:
+                path_len = nx.shortest_path_length(graph, node, node_id)
+            except nx.NetworkXNoPath:
+                path_len = depth + 1  # Beyond max depth
+
+            if path_len <= depth:
+                if path_len not in depth_groups:
+                    depth_groups[path_len] = []
+                depth_groups[path_len].append(node)
+
+        # Find terminal nodes (root causes - no predecessors)
+        root_causes = []
+        for node in causes:
+            if graph.in_degree(node) == 0:
+                root_causes.append(node)
+
+        # Find primary cause (highest centrality root)
+        primary_cause = None
+        max_cent = 0.0
+        for node in root_causes:
+            cent = centrality(node, graph)
+            if cent > max_cent:
+                max_cent = cent
+                primary_cause = node
+
+        result = {
+            "node_id": node_id,
+            "depth": depth,
+            "causes_count": len(causes),
+            "depth_groups": {str(k): v for k, v in depth_groups.items()},
+            "root_causes": root_causes[:5],  # Top 5
+            "primary_cause": primary_cause,
+            "primary_cause_centrality": round(max_cent, 3) if primary_cause else 0.0,
+        }
+
+        _emit_cli_receipt("trace-backward", {"node_id": node_id, "depth": depth}, result, 0)
+
+        if output_json:
+            print(json.dumps(result, indent=2))
+        else:
+            lines = []
+            for d in sorted(depth_groups.keys()):
+                nodes = depth_groups[d]
+                for node in nodes[:2]:  # Show max 2 per depth
+                    cent = centrality(node, graph)
+                    lines.append(f"Depth {d}: {node} (centrality={cent:.2f})")
+
+            lines.append("")
+            lines.append(f"Root causes: {len(root_causes)} terminal nodes")
+            if primary_cause:
+                lines.append(f"Primary cause: {primary_cause} (highest centrality)")
+
+            print(_ascii_box(f"Backward Trace: {node_id}", lines))
+
+            # Suggest next command
+            if primary_cause:
+                print(f"Next: proof value {primary_cause}")
+            else:
+                print(f"Next: proof health")
+
+        return 0
+
+    except Exception as e:
+        result = {"error": str(e)}
+        _emit_cli_receipt("trace-backward", {"node_id": node_id, "depth": depth}, result, 2)
+        if output_json:
+            print(json.dumps(result))
+        else:
+            print(f"ERROR: {e}")
+        return 2
+
+
+def cmd_replay_counterfactual(
+    counterfactual: str,
+    graph_path: str = "data/graph",
+    events_path: str = "data/events/events.jsonl",
+    output_json: bool = False,
+) -> int:
+    """
+    Auditor Question: "What if thresholds were different?"
+
+    Backward causation - future counterfactual changes past observations (v9 Paradigm 4).
+
+    Args:
+        counterfactual: KEY=VALUE string (e.g., "centrality_floor=0.5")
+        graph_path: Path to graph data directory
+        events_path: Path to events JSONL
+        output_json: Output as JSON instead of ASCII
+
+    Returns:
+        Exit code: 0=replay complete, 1=invalid counterfactual, 2=replay error
+    """
+    try:
+        # Parse counterfactual string
+        if "=" not in counterfactual:
+            result = {"error": "Invalid counterfactual format. Use KEY=VALUE"}
+            _emit_cli_receipt("counterfactual", {"counterfactual": counterfactual}, result, 1)
+            if output_json:
+                print(json.dumps(result))
+            else:
+                print(f"ERROR: {result['error']}")
+            return 1
+
+        key, value = counterfactual.split("=", 1)
+        try:
+            value_float = float(value)
+        except ValueError:
+            result = {"error": f"Value must be numeric, got '{value}'"}
+            _emit_cli_receipt("counterfactual", {"counterfactual": counterfactual}, result, 1)
+            if output_json:
+                print(json.dumps(result))
+            else:
+                print(f"ERROR: {result['error']}")
+            return 1
+
+        # Load graph
+        graph = _load_graph(graph_path)
+
+        # Load events from file
+        events_file = Path(events_path)
+        events = []
+        if events_file.exists():
+            from event_stream import EventRecord
+
+            with events_file.open("r") as f:
+                for line in f:
+                    if line.strip():
+                        data = json.loads(line)
+                        events.append(EventRecord.from_dict(data))
+
+        if not events:
+            result = {"error": f"No events found at {events_path}"}
+            _emit_cli_receipt("counterfactual", {"counterfactual": counterfactual}, result, 2)
+            if output_json:
+                print(json.dumps(result))
+            else:
+                print(f"ERROR: {result['error']}")
+            return 2
+
+        # Build counterfactual dict
+        cf_dict = {"threshold_override": value_float}
+
+        # Replay events under counterfactual
+        replay_receipts = event_replay(events[:100], cf_dict, graph)  # Limit to 100
+
+        if not replay_receipts:
+            result = {"error": "Replay failed - no receipts emitted"}
+            _emit_cli_receipt("counterfactual", {"counterfactual": counterfactual}, result, 2)
+            if output_json:
+                print(json.dumps(result))
+            else:
+                print(f"ERROR: {result['error']}")
+            return 2
+
+        replay_receipt = replay_receipts[0]
+        visibility_changes = replay_receipt.get("visibility_changes", {})
+
+        # Count changes
+        changes_count = sum(
+            1 for v in visibility_changes.values() if v.get("changed", False)
+        )
+
+        result = {
+            "counterfactual": counterfactual,
+            "events_replayed": replay_receipt.get("events_replayed", 0),
+            "changes_count": changes_count,
+            "total_events": len(visibility_changes),
+        }
+
+        _emit_cli_receipt("counterfactual", {"counterfactual": counterfactual}, result, 0)
+
+        if output_json:
+            print(json.dumps(result, indent=2))
+        else:
+            lines = [
+                f"Counterfactual: {counterfactual}",
+                "",
+                f"Mode changes under new physics:",
+                f"  Events analyzed: {len(visibility_changes)}",
+                f"  Visibility changed: {changes_count}",
+                "",
+                f"Affected: {changes_count} of {len(visibility_changes)} events would change visibility",
+            ]
+
+            print(_ascii_box("Counterfactual Replay", lines))
+            print("Next: python proof.py query --lens=shadow")
+
+        return 0
+
+    except Exception as e:
+        result = {"error": str(e)}
+        _emit_cli_receipt("counterfactual", {"counterfactual": counterfactual}, result, 2)
+        if output_json:
+            print(json.dumps(result))
+        else:
+            print(f"ERROR: {e}")
+        return 2
+
+
+def cmd_health(
+    graph_path: str = "data/graph",
+    output_json: bool = False,
+    quiet: bool = False,
+) -> int:
+    """
+    Auditor Question: "How healthy is the system?"
+
+    Combines self-compression ratio + portfolio health (v9 Paradigm 5).
+
+    Args:
+        graph_path: Path to graph data directory
+        output_json: Output as JSON instead of ASCII
+        quiet: Suppress ASCII decorations
+
+    Returns:
+        Exit code: 0=healthy (>0.5), 1=caution (0.3-0.5), 2=unhealthy (<0.3)
+    """
+    try:
+        graph = _load_graph(graph_path)
+
+        if graph.number_of_nodes() == 0:
+            result = {
+                "compression_ratio": 1.0,
+                "portfolio_health": 1.0,
+                "status": "healthy (empty graph)",
+            }
+            _emit_cli_receipt("health", {}, result, 0)
+            if output_json:
+                print(json.dumps(result))
+            else:
+                print("Empty graph - no health data")
+            return 0
+
+        # Compute self-compression ratio
+        compression = self_compression_ratio(graph)
+
+        # Compute portfolio health
+        companies = ["tesla", "spacex"]  # Default companies
+        health_receipts = portfolio_health(graph, companies)
+
+        if health_receipts:
+            health_data = health_receipts[0]
+            health_score = health_data.get("health_score", 0.0)
+            components = health_data.get("components", {})
+            avg_centrality = components.get("avg_centrality", 0.0)
+            avg_entanglement = components.get("avg_entanglement", 0.0)
+        else:
+            health_score = 0.0
+            avg_centrality = 0.0
+            avg_entanglement = 0.0
+
+        # Interpret compression ratio
+        if compression > 0.5:
+            compression_status = "HEALTHY"
+        elif compression >= 0.3:
+            compression_status = "CAUTION"
+        else:
+            compression_status = "UNHEALTHY"
+
+        # Determine overall status
+        if compression > 0.5:
+            status = "healthy"
+            exit_code = 0
+        elif compression >= 0.3:
+            status = "caution"
+            exit_code = 1
+        else:
+            status = "unhealthy"
+            exit_code = 2
+
+        result = {
+            "compression_ratio": round(compression, 2),
+            "compression_status": compression_status,
+            "portfolio_health": round(health_score, 2),
+            "avg_centrality": round(avg_centrality, 2),
+            "avg_entanglement": round(avg_entanglement, 2),
+            "status": status,
+        }
+
+        _emit_cli_receipt("health", {}, result, exit_code)
+
+        if output_json:
+            print(json.dumps(result, indent=2))
+        else:
+            lines = [
+                f"Self-Compression Ratio: {compression:.2f}",
+                f"Interpretation: {compression_status} (system understands itself well)",
+                "",
+                f"Portfolio Health: {health_score:.2f}",
+                f"Avg Centrality: {avg_centrality:.2f}",
+                f"Avg Entanglement: {avg_entanglement:.2f}",
+                "",
+                f"Status: {'✓' if exit_code == 0 else '⚠' if exit_code == 1 else '✗'} {status.upper()}",
+            ]
+
+            print(_ascii_box("System Health", lines))
+            print("Next: proof entanglement --pattern=<pattern_id>")
+
+        return exit_code
+
+    except Exception as e:
+        result = {"error": str(e)}
+        _emit_cli_receipt("health", {}, result, 2)
+        if output_json:
+            print(json.dumps(result))
+        else:
+            print(f"ERROR: {e}")
+        return 2
+
+
+def cmd_entanglement(
+    pattern: Optional[str] = None,
+    companies: Optional[str] = None,
+    graph_path: str = "data/graph",
+    output_json: bool = False,
+) -> int:
+    """
+    Auditor Question: "What's our systemic risk?"
+
+    Cross-company entanglement coefficient with SLO check (v9 Paradigm 6 + CLAUDEME 5.3).
+
+    Args:
+        pattern: Pattern ID to analyze (optional - shows top 10 if not specified)
+        companies: Comma-separated company list (default: tesla,spacex)
+        graph_path: Path to graph data directory
+        output_json: Output as JSON instead of ASCII
+
+    Returns:
+        Exit code: 0=low risk (<0.8), 1=elevated (0.8-0.92), 2=high/SLO violation (>0.92)
+    """
+    try:
+        graph = _load_graph(graph_path)
+
+        if graph.number_of_nodes() == 0:
+            result = {"error": "Empty graph - no entanglement data"}
+            _emit_cli_receipt("entanglement", {"pattern": pattern, "companies": companies}, result, 2)
+            if output_json:
+                print(json.dumps(result))
+            else:
+                print(f"ERROR: {result['error']}")
+            return 2
+
+        # Parse companies
+        if companies:
+            company_list = [c.strip() for c in companies.split(",")]
+        else:
+            company_list = ["tesla", "spacex"]
+
+        # If no pattern specified, show top 10 most entangled
+        if pattern is None:
+            # Get all patterns
+            all_patterns = []
+            for node in graph.nodes():
+                if graph.nodes[node].get("is_pattern", False) or (
+                    isinstance(node, str) and "pattern" in node.lower()
+                ):
+                    all_patterns.append(node)
+
+            if not all_patterns:
+                all_patterns = list(graph.nodes())[:10]  # Use first 10 nodes
+
+            # Compute entanglement for each
+            pattern_entanglements = []
+            for p in all_patterns[:20]:  # Limit to 20
+                coeff = entanglement_coefficient(p, company_list, graph)
+                pattern_entanglements.append((p, coeff))
+
+            # Sort by coefficient descending
+            pattern_entanglements.sort(key=lambda x: x[1], reverse=True)
+
+            result = {
+                "top_patterns": [
+                    {"pattern_id": p, "coefficient": round(c, 3)}
+                    for p, c in pattern_entanglements[:10]
+                ],
+                "companies": company_list,
+            }
+
+            _emit_cli_receipt("entanglement", {"companies": companies}, result, 0)
+
+            if output_json:
+                print(json.dumps(result, indent=2))
+            else:
+                lines = [f"Companies: {', '.join(company_list)}", ""]
+                lines.append("Top 10 most entangled patterns:")
+                for p, c in pattern_entanglements[:10]:
+                    lines.append(f"  {p}: {c:.3f}")
+
+                print(_ascii_box("Entanglement Analysis", lines))
+                if pattern_entanglements:
+                    print(f"Next: proof entanglement --pattern={pattern_entanglements[0][0]}")
+
+            return 0
+
+        # Analyze specific pattern
+        if pattern not in graph:
+            result = {"error": f"Pattern '{pattern}' not found in graph"}
+            _emit_cli_receipt("entanglement", {"pattern": pattern, "companies": companies}, result, 1)
+            if output_json:
+                print(json.dumps(result))
+            else:
+                print(f"ERROR: {result['error']}")
+            return 1
+
+        coeff = entanglement_coefficient(pattern, company_list, graph)
+
+        # SLO check (>= 0.92 is target for high coherence)
+        slo = 0.92
+        meets_slo = coeff >= slo
+
+        # Determine exit code based on risk level
+        if coeff < 0.8:
+            exit_code = 0
+            risk_level = "LOW"
+        elif coeff < 0.92:
+            exit_code = 1
+            risk_level = "ELEVATED"
+        else:
+            exit_code = 0 if meets_slo else 2  # High but expected if meets SLO
+            risk_level = "HIGH" if not meets_slo else "HIGH (COHERENT)"
+
+        # Interpretation
+        if coeff >= 0.8:
+            interpretation = f"High coherence - observing in {company_list[0]} strongly predicts behavior in others"
+        elif coeff >= 0.5:
+            interpretation = "Moderate coherence - some cross-company correlation"
+        else:
+            interpretation = "Low coherence - pattern behaves independently across companies"
+
+        result = {
+            "pattern_id": pattern,
+            "companies": company_list,
+            "coefficient": round(coeff, 3),
+            "slo_status": "PASS" if meets_slo or coeff < slo else "FAIL",
+            "meets_slo": meets_slo,
+            "risk_level": risk_level,
+            "interpretation": interpretation,
+        }
+
+        _emit_cli_receipt("entanglement", {"pattern": pattern, "companies": companies}, result, exit_code)
+
+        if output_json:
+            print(json.dumps(result, indent=2))
+        else:
+            lines = [
+                f"Pattern: {pattern}",
+                f"Companies: {', '.join(company_list)}",
+                "",
+                f"Entanglement Coefficient: {coeff:.3f}",
+                f"SLO Status: {'✓' if meets_slo or coeff < slo else '✗'} {'PASS' if meets_slo or coeff < slo else 'FAIL'} (threshold={slo})",
+                "",
+                f"Interpretation: {interpretation}",
+                "",
+                f"Systemic Risk: {risk_level}",
+            ]
+
+            print(_ascii_box("Entanglement Analysis", lines))
+            print(f"Next: proof trace-forward {pattern}")
+
+        return exit_code
+
+    except Exception as e:
+        result = {"error": str(e)}
+        _emit_cli_receipt("entanglement", {"pattern": pattern, "companies": companies}, result, 2)
+        if output_json:
+            print(json.dumps(result))
+        else:
+            print(f"ERROR: {e}")
+        return 2
+
+
+def cmd_query(
+    lens: str,
+    min_centrality: Optional[float] = None,
+    graph_path: str = "data/graph",
+    output_json: bool = False,
+) -> int:
+    """
+    Auditor Question: "Show me patterns matching this lens"
+
+    Mode as projection - filter by QueryPredicate (v9 Paradigm 3).
+
+    Args:
+        lens: Lens name (live, shadow, deprecated, high_value, danger_zone, or custom)
+        min_centrality: Override min centrality threshold
+        graph_path: Path to graph data directory
+        output_json: Output as JSON instead of ASCII
+
+    Returns:
+        Exit code: 0=results found, 1=no matches, 2=invalid lens
+    """
+    try:
+        graph = _load_graph(graph_path)
+
+        if graph.number_of_nodes() == 0:
+            result = {"error": "Empty graph - no patterns to query"}
+            _emit_cli_receipt("query", {"lens": lens}, result, 2)
+            if output_json:
+                print(json.dumps(result))
+            else:
+                print(f"ERROR: {result['error']}")
+            return 2
+
+        # Build predicate from lens
+        if lens == "live":
+            predicate = QueryPredicate.live()
+        elif lens == "shadow":
+            predicate = QueryPredicate.shadow()
+        elif lens == "deprecated":
+            predicate = QueryPredicate.deprecated()
+        elif lens == "high_value":
+            threshold = min_centrality if min_centrality is not None else 0.7
+            predicate = QueryPredicate.high_value(threshold)
+        elif lens == "danger_zone":
+            # High entanglement + low centrality
+            predicate = QueryPredicate(
+                actionable=False,
+                ttl_valid=True,
+                min_centrality=0.0,
+                max_centrality=0.3,
+            )
+        elif "=" in lens:
+            # Custom lens parsing
+            result = {"error": "Custom lens syntax not yet implemented. Use: live, shadow, deprecated, high_value, danger_zone"}
+            _emit_cli_receipt("query", {"lens": lens}, result, 2)
+            if output_json:
+                print(json.dumps(result))
+            else:
+                print(f"ERROR: {result['error']}")
+            return 2
+        else:
+            result = {"error": f"Invalid lens '{lens}'. Use: live, shadow, deprecated, high_value, danger_zone"}
+            _emit_cli_receipt("query", {"lens": lens}, result, 2)
+            if output_json:
+                print(json.dumps(result))
+            else:
+                print(f"ERROR: {result['error']}")
+            return 2
+
+        # Get all patterns
+        all_patterns = []
+        for node in graph.nodes():
+            if graph.nodes[node].get("is_pattern", False) or (
+                isinstance(node, str) and "pattern" in node.lower()
+            ):
+                all_patterns.append(node)
+
+        if not all_patterns:
+            all_patterns = list(graph.nodes())  # Use all nodes if no pattern markers
+
+        # Filter by predicate
+        matching = []
+        for pattern_id in all_patterns:
+            cent = centrality(pattern_id, graph)
+            if predicate.matches(cent):
+                matching.append((pattern_id, cent))
+
+        # Sort by centrality descending
+        matching.sort(key=lambda x: x[1], reverse=True)
+
+        if not matching:
+            result = {"lens": lens, "match_count": 0, "matches": []}
+            _emit_cli_receipt("query", {"lens": lens}, result, 1)
+            if output_json:
+                print(json.dumps(result))
+            else:
+                print(f"No patterns match lens '{lens}'")
+            return 1
+
+        result = {
+            "lens": lens,
+            "match_count": len(matching),
+            "matches": [
+                {"pattern_id": p, "centrality": round(c, 3)}
+                for p, c in matching[:20]  # Top 20
+            ],
+        }
+
+        _emit_cli_receipt("query", {"lens": lens}, result, 0)
+
+        if output_json:
+            print(json.dumps(result, indent=2))
+        else:
+            lines = [f"Matching patterns: {len(matching)}", ""]
+            for p, c in matching[:7]:  # Show top 7
+                lines.append(f"  {p:<35} centrality={c:.2f}")
+            if len(matching) > 7:
+                lines.append(f"  ... ({len(matching) - 7} more)")
+            lines.append("")
+            lines.append(f"Lens: {lens}")
+
+            print(_ascii_box(f"Query Results: lens={lens}", lines))
+
+            if matching:
+                print(f"Next: proof value {matching[0][0]}")
+
+        return 0
+
+    except Exception as e:
+        result = {"error": str(e)}
+        _emit_cli_receipt("query", {"lens": lens}, result, 2)
+        if output_json:
+            print(json.dumps(result))
+        else:
+            print(f"ERROR: {e}")
+        return 2
+
+
 # --- CLI Main ---
 
 
 def main() -> int:
     """Main CLI entry point."""
     parser = argparse.ArgumentParser(
-        description="QED v6/v7 Proof CLI Harness",
+        description="QED v6/v7/v9 Proof CLI Harness",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -852,9 +1838,216 @@ v7 Commands:
   python proof.py recall-floor             # Compute recall lower bound
   python proof.py pattern-report           # Display pattern library
   python proof.py clarity-audit --receipts-path receipts.jsonl
+
+v9 Commands (Causal Graph):
+  python proof.py value <pattern_id>       # What is this pattern worth?
+  python proof.py trace-forward <node_id>  # What would change?
+  python proof.py trace-backward <node_id> # How did this happen?
+  python proof.py counterfactual centrality_floor=0.5  # What-if analysis
+  python proof.py health                   # How healthy is the system?
+  python proof.py entanglement --pattern <pattern_id>
+  python proof.py query --lens=live        # Show patterns matching lens
         """,
     )
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
+
+    # --- v9 Subcommand Parsers ---
+
+    value_parser = subparsers.add_parser(
+        "value",
+        help="Compute pattern value via graph centrality",
+    )
+    value_parser.add_argument(
+        "pattern_id",
+        type=str,
+        help="Pattern ID to compute value for",
+    )
+    value_parser.add_argument(
+        "--graph-path",
+        type=str,
+        default="data/graph",
+        help="Path to graph data directory",
+    )
+    value_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output as JSON instead of ASCII",
+    )
+    value_parser.add_argument(
+        "--quiet",
+        action="store_true",
+        help="Suppress ASCII decorations",
+    )
+
+    trace_fwd_parser = subparsers.add_parser(
+        "trace-forward",
+        help="Trace forward effects (blast radius)",
+    )
+    trace_fwd_parser.add_argument(
+        "node_id",
+        type=str,
+        help="Starting node ID",
+    )
+    trace_fwd_parser.add_argument(
+        "--depth",
+        type=int,
+        default=3,
+        help="Maximum depth to traverse (default 3, max 10)",
+    )
+    trace_fwd_parser.add_argument(
+        "--graph-path",
+        type=str,
+        default="data/graph",
+        help="Path to graph data directory",
+    )
+    trace_fwd_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output as JSON instead of ASCII",
+    )
+    trace_fwd_parser.add_argument(
+        "--quiet",
+        action="store_true",
+        help="Suppress ASCII decorations",
+    )
+
+    trace_bwd_parser = subparsers.add_parser(
+        "trace-backward",
+        help="Trace backward causes (root cause analysis)",
+    )
+    trace_bwd_parser.add_argument(
+        "node_id",
+        type=str,
+        help="Starting node ID",
+    )
+    trace_bwd_parser.add_argument(
+        "--depth",
+        type=int,
+        default=3,
+        help="Maximum depth to traverse (default 3, max 10)",
+    )
+    trace_bwd_parser.add_argument(
+        "--graph-path",
+        type=str,
+        default="data/graph",
+        help="Path to graph data directory",
+    )
+    trace_bwd_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output as JSON instead of ASCII",
+    )
+    trace_bwd_parser.add_argument(
+        "--quiet",
+        action="store_true",
+        help="Suppress ASCII decorations",
+    )
+
+    counterfactual_parser = subparsers.add_parser(
+        "counterfactual",
+        help="Replay events under counterfactual (backward causation)",
+    )
+    counterfactual_parser.add_argument(
+        "counterfactual",
+        type=str,
+        help="Counterfactual string (e.g., centrality_floor=0.5)",
+    )
+    counterfactual_parser.add_argument(
+        "--graph-path",
+        type=str,
+        default="data/graph",
+        help="Path to graph data directory",
+    )
+    counterfactual_parser.add_argument(
+        "--events-path",
+        type=str,
+        default="data/events/events.jsonl",
+        help="Path to events JSONL file",
+    )
+    counterfactual_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output as JSON instead of ASCII",
+    )
+
+    health_parser = subparsers.add_parser(
+        "health",
+        help="Compute system health via self-compression + portfolio health",
+    )
+    health_parser.add_argument(
+        "--graph-path",
+        type=str,
+        default="data/graph",
+        help="Path to graph data directory",
+    )
+    health_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output as JSON instead of ASCII",
+    )
+    health_parser.add_argument(
+        "--quiet",
+        action="store_true",
+        help="Suppress ASCII decorations",
+    )
+
+    entanglement_parser = subparsers.add_parser(
+        "entanglement",
+        help="Compute cross-company entanglement coefficient (SLO >= 0.92)",
+    )
+    entanglement_parser.add_argument(
+        "--pattern",
+        type=str,
+        default=None,
+        help="Pattern ID to analyze (shows top 10 if not specified)",
+    )
+    entanglement_parser.add_argument(
+        "--companies",
+        type=str,
+        default=None,
+        help="Comma-separated company list (default: tesla,spacex)",
+    )
+    entanglement_parser.add_argument(
+        "--graph-path",
+        type=str,
+        default="data/graph",
+        help="Path to graph data directory",
+    )
+    entanglement_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output as JSON instead of ASCII",
+    )
+
+    query_parser = subparsers.add_parser(
+        "query",
+        help="Query patterns by lens (mode as projection)",
+    )
+    query_parser.add_argument(
+        "--lens",
+        type=str,
+        required=True,
+        help="Lens name (live, shadow, deprecated, high_value, danger_zone)",
+    )
+    query_parser.add_argument(
+        "--min-centrality",
+        type=float,
+        default=None,
+        help="Override minimum centrality threshold",
+    )
+    query_parser.add_argument(
+        "--graph-path",
+        type=str,
+        default="data/graph",
+        help="Path to graph data directory",
+    )
+    query_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output as JSON instead of ASCII",
+    )
+
+    # --- Legacy/v7 Subcommand Parsers ---
 
     gates_parser = subparsers.add_parser(
         "gates",
@@ -1068,7 +2261,75 @@ v7 Commands:
 
     args = parser.parse_args()
 
-    if args.command == "gates":
+    # --- v9 Command Handlers ---
+
+    if args.command == "value":
+        exit_code = cmd_value(
+            pattern_id=args.pattern_id,
+            graph_path=args.graph_path,
+            output_json=args.json,
+            quiet=args.quiet,
+        )
+        return exit_code
+
+    elif args.command == "trace-forward":
+        exit_code = cmd_trace_forward(
+            node_id=args.node_id,
+            depth=args.depth,
+            graph_path=args.graph_path,
+            output_json=args.json,
+            quiet=args.quiet,
+        )
+        return exit_code
+
+    elif args.command == "trace-backward":
+        exit_code = cmd_trace_backward(
+            node_id=args.node_id,
+            depth=args.depth,
+            graph_path=args.graph_path,
+            output_json=args.json,
+            quiet=args.quiet,
+        )
+        return exit_code
+
+    elif args.command == "counterfactual":
+        exit_code = cmd_replay_counterfactual(
+            counterfactual=args.counterfactual,
+            graph_path=args.graph_path,
+            events_path=args.events_path,
+            output_json=args.json,
+        )
+        return exit_code
+
+    elif args.command == "health":
+        exit_code = cmd_health(
+            graph_path=args.graph_path,
+            output_json=args.json,
+            quiet=args.quiet,
+        )
+        return exit_code
+
+    elif args.command == "entanglement":
+        exit_code = cmd_entanglement(
+            pattern=args.pattern,
+            companies=args.companies,
+            graph_path=args.graph_path,
+            output_json=args.json,
+        )
+        return exit_code
+
+    elif args.command == "query":
+        exit_code = cmd_query(
+            lens=args.lens,
+            min_centrality=args.min_centrality,
+            graph_path=args.graph_path,
+            output_json=args.json,
+        )
+        return exit_code
+
+    # --- Legacy/v7 Command Handlers ---
+
+    elif args.command == "gates":
         result = run_proof(seed=args.seed)
 
         if args.json:
