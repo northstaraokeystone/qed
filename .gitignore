@@ -9,3 +9,7 @@ CLAUDEME.md
 
 # DecisionPacket files (runtime artifacts)
 data/packets/*.jsonl
+
+# Smoke test receipts (generated runtime artifacts)
+tests/smoke/smoke_receipt.jsonl
+tests/smoke/.pytest_report.json
