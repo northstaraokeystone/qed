@@ -1,31 +1,39 @@
 """
-mesh_view_v3.py - Living Fleet Topology Graph for QED v8
+mesh_view_v3.py - Cross-Company Entanglement Mesh Visualization (v9 Upgrade)
 
-This module transforms packets into a living fleet topology. It's not just
-visualization—it's a queryable graph that predicts pattern propagation,
-detects fleet anomalies, and recommends cross-deployment actions.
+Upgrade from v8 deployment graph to v9 entanglement mesh with:
+- Entanglement edges connecting companies via shared patterns
+- Centrality-based node sizing (node size = value)
+- Entanglement-based edge width (edge width = risk)
+- ASCII visualization (no pixels per SDD line 101)
+- Self-interpreting risk map with danger zones
 
-Foundation for:
-- Portfolio binder (v9)
-- Meta layer (v10)
+Per CLAUDEME Section 4 (Starlink Pattern):
+- Nodes as satellites: independently observable, replaceable, part of mesh
+- Health, latency, entanglement tracked as orbital parameters
+- Global behavior emerges from local receipts
 
-Design Principles:
-- Queryable: Graph answers questions, not just displays data
-- Predictive: Propagation prediction powers v10 proposals
-- Self-diagnosing: Graph knows when it's unhealthy
-- Temporal: Evolution tracking catches drift
-- Backward compatible: v2 exports preserved
+Per QED_Build_Strat_v5 line 450-451: explicit exploit links
+Per SDD line 237-242: Starlink orbital parameters
+Per Charter line 114-116: Link Mesh
 
-Changes from v2:
-- Single build() entry point (vs load_packets + build_deployment_graph)
-- similarity_score + weight on edges (vs unweighted)
-- find_clusters + find_outliers (vs find_reuse_clusters only)
-- track_evolution() temporal tracking (vs static graph)
-- is_stale flag on nodes (vs nodes just exist)
-- predict_propagation() recommendations (vs visualization only)
-- diagnose() health checks (vs no health check)
-- recommend_patterns() per deployment (vs no recommendations)
-- fleet_cohesion score (vs basic fleet metrics)
+The mesh IS the risk model - no separate analysis needed.
+
+v9 Additions:
+- EntanglementEdge: cross-company pattern links
+- MeshNode: company nodes with centrality sizing
+- build_entanglement_edges(): edge builder from causal_graph
+- build_mesh_nodes(): centrality-based node builder
+- render_ascii_mesh(): ASCII-only visualization
+- identify_danger_zones(): high-risk, low-value pattern detection
+- mesh_summary(): aggregate statistics
+- generate_mesh(): backward-compatible entry point
+
+v8 Features (preserved):
+- DeploymentGraph: fleet topology graph
+- build(): packet-based graph construction
+- predict_propagation(): pattern spread prediction
+- diagnose(): graph health checks
 """
 
 from __future__ import annotations
@@ -33,7 +41,9 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import statistics
 from collections import defaultdict
+from itertools import combinations
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
@@ -42,10 +52,20 @@ from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
 # Import from sibling modules
 from decision_packet import DecisionPacket, PatternSummary, PacketMetrics
 
+# v9 imports for entanglement mesh
+import networkx as nx
+
+from causal_graph import (
+    centrality,
+    entanglement_coefficient,
+    build_graph as build_causal_graph,
+    ENTANGLEMENT_SLO,
+)
+from portfolio_aggregator import get_shared_patterns
+
 # Backward compatibility: re-export all mesh_view_v2 public functions
 from mesh_view_v2 import (
     load_manifest,
-    build_company_table,
     sample_receipts,
     extract_hook_from_receipt,
     parse_company_from_hook,
@@ -69,8 +89,7 @@ from mesh_view_v2 import (
 from mesh_view_v2 import _compute_exploit_count as compute_exploit_count
 from mesh_view_v2 import _compute_cross_domain_links as compute_cross_domain_links
 
-# Build fake build_company_table if not already defined
-# (mesh_view_v2 has compute_metrics but we alias it for compatibility)
+# Alias compute_metrics as build_company_table for compatibility
 build_company_table = compute_metrics
 
 # Import config schema
@@ -81,6 +100,125 @@ except ImportError:
 
 # Default stale threshold in days
 DEFAULT_STALE_THRESHOLD_DAYS = 7
+
+
+# =============================================================================
+# v9 Constants (per task spec - Starlink Pattern)
+# =============================================================================
+
+COMPANY_ABBREV: Dict[str, str] = {
+    "tesla": "TSL",
+    "spacex": "SPX",
+    "starlink": "STR",
+    "boring": "BOR",
+    "neuralink": "NRL",
+    "xai": "XAI",
+}
+
+# Reverse mapping for lookup
+ABBREV_COMPANY: Dict[str, str] = {v: k for k, v in COMPANY_ABBREV.items()}
+
+# Default companies list (observation lenses)
+DEFAULT_COMPANIES: List[str] = ["tesla", "spacex", "starlink", "boring", "neuralink", "xai"]
+
+# Edge width thresholds (entanglement-based)
+EDGE_THIN_THRESHOLD = 0.3      # < 0.3: thin (-)
+EDGE_MEDIUM_THRESHOLD = 0.6   # 0.3-0.6: medium (=)
+EDGE_THICK_THRESHOLD = 0.9    # 0.6-0.9: thick (triple line)
+# >= 0.9: critical (block)
+
+# Danger zone defaults (per v9 paradigm 6)
+DEFAULT_ENTANGLEMENT_THRESHOLD = 0.8
+DEFAULT_CENTRALITY_THRESHOLD = 0.3
+
+
+# =============================================================================
+# v9 Receipt Schema (self-describing module contract per CLAUDEME Section 1)
+# =============================================================================
+
+RECEIPT_SCHEMA: List[Dict[str, Any]] = [
+    {
+        "type": "mesh_receipt",
+        "version": "3.0.0",
+        "description": "Receipt emitted by mesh visualization - cross-company entanglement topology",
+        "fields": {
+            "receipt_id": "SHA3-256 hash (16 chars) of mesh parameters",
+            "timestamp": "ISO UTC timestamp",
+            "node_count": "int - total company nodes",
+            "edge_count": "int - total entanglement edges",
+            "avg_entanglement": "float - mean edge entanglement",
+            "max_entanglement": "float - highest entanglement coefficient",
+            "danger_zone_count": "int - high-risk pattern count",
+            "healthiest_company": "str - company with highest centrality",
+            "riskiest_edge": "Dict - edge with highest entanglement",
+        },
+    },
+]
+
+
+# =============================================================================
+# v9 Frozen Dataclasses (Entanglement Mesh)
+# =============================================================================
+
+@dataclass(frozen=True)
+class EntanglementEdge:
+    """
+    Edge connecting two companies via a shared pattern.
+
+    Per QED_Build_Strat_v5 line 450-451: explicit exploit links.
+    Edge width = risk (entanglement). Higher entanglement = systemic risk.
+
+    Attributes:
+        source_company: First company in the edge
+        target_company: Second company in the edge
+        pattern_id: The shared pattern creating this link
+        entanglement_coefficient: Value 0-1 from causal_graph
+        shared_centrality: Centrality of the shared pattern
+    """
+    source_company: str
+    target_company: str
+    pattern_id: str
+    entanglement_coefficient: float  # 0-1, from causal_graph
+    shared_centrality: float  # centrality of shared pattern
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize to dictionary."""
+        return {
+            "source_company": self.source_company,
+            "target_company": self.target_company,
+            "pattern_id": self.pattern_id,
+            "entanglement_coefficient": self.entanglement_coefficient,
+            "shared_centrality": self.shared_centrality,
+        }
+
+
+@dataclass(frozen=True)
+class MeshNode:
+    """
+    Node representing a company in the entanglement mesh.
+
+    Per Starlink Pattern (CLAUDEME Section 4): nodes as satellites.
+    Node size = value (centrality). Display size by quartile.
+
+    Attributes:
+        company_id: Company identifier (tesla, spacex, etc.)
+        pattern_count: Number of patterns observed through this lens
+        total_centrality: Sum of pattern centralities for this company
+        display_size: S/M/L/XL based on centrality quartiles
+    """
+    company_id: str
+    pattern_count: int
+    total_centrality: float  # sum of pattern centralities for this company
+    display_size: str  # S/M/L/XL based on quartile
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize to dictionary."""
+        return {
+            "company_id": self.company_id,
+            "pattern_count": self.pattern_count,
+            "total_centrality": self.total_centrality,
+            "display_size": self.display_size,
+        }
 
 
 # =============================================================================
@@ -1623,6 +1761,523 @@ def diagnose(graph: DeploymentGraph) -> GraphDiagnosis:
 
 
 # =============================================================================
+# v9 Entanglement Mesh Functions
+# =============================================================================
+
+def build_entanglement_edges(
+    graph: nx.DiGraph,
+    companies: List[str],
+) -> List[EntanglementEdge]:
+    """
+    Build entanglement edges from shared patterns across companies.
+
+    For each pattern shared by 2+ companies:
+    - Get entanglement_coefficient(pattern_id, sharing_companies, graph)
+    - Get centrality(pattern_id, graph)
+    - Create EntanglementEdge for each company pair sharing the pattern
+
+    Args:
+        graph: NetworkX DiGraph with pattern and company nodes
+        companies: List of company identifiers
+
+    Returns:
+        List of EntanglementEdge sorted by entanglement_coefficient descending
+        (highest risk first per task spec)
+    """
+    edges: List[EntanglementEdge] = []
+
+    # Get patterns shared across multiple companies
+    shared = get_shared_patterns(graph, companies)
+
+    # If no shared patterns detected via graph structure, try alternative detection
+    if not shared:
+        # Build pattern->companies mapping from node attributes
+        pattern_companies: Dict[str, Set[str]] = defaultdict(set)
+
+        for node in graph.nodes():
+            node_data = graph.nodes[node]
+            company = node_data.get("company")
+            if company and company in companies:
+                # Look for patterns this company's node connects to
+                for neighbor in list(graph.successors(node)) + list(graph.predecessors(node)):
+                    if graph.nodes.get(neighbor, {}).get("is_pattern", False):
+                        pattern_companies[neighbor].add(company)
+
+        # Also check nodes directly marked as patterns
+        for node in graph.nodes():
+            if graph.nodes[node].get("is_pattern", False):
+                # Check connected companies
+                for neighbor in list(graph.successors(node)) + list(graph.predecessors(node)):
+                    company = graph.nodes.get(neighbor, {}).get("company")
+                    if company and company in companies:
+                        pattern_companies[node].add(company)
+
+        # Filter to only shared patterns
+        shared = {p: c for p, c in pattern_companies.items() if len(c) > 1}
+
+    # Create edges for each shared pattern
+    for pattern_id, sharing_companies in shared.items():
+        company_list = sorted(sharing_companies)
+
+        # Get entanglement coefficient for this pattern across sharing companies
+        e_coeff = entanglement_coefficient(pattern_id, company_list, graph)
+
+        # Get centrality of the pattern
+        c = centrality(pattern_id, graph)
+
+        # Create edge for each pair of companies sharing this pattern
+        for company_a, company_b in combinations(company_list, 2):
+            edge = EntanglementEdge(
+                source_company=company_a,
+                target_company=company_b,
+                pattern_id=pattern_id,
+                entanglement_coefficient=e_coeff,
+                shared_centrality=c,
+            )
+            edges.append(edge)
+
+    # Sort by entanglement coefficient descending (highest risk first)
+    edges.sort(key=lambda e: e.entanglement_coefficient, reverse=True)
+
+    return edges
+
+
+def build_mesh_nodes(
+    graph: nx.DiGraph,
+    companies: List[str],
+) -> List[MeshNode]:
+    """
+    Build mesh nodes with centrality-based sizing.
+
+    For each company:
+    - Sum centrality of all patterns observed through that company's lens
+    - Assign display_size by quartile: bottom 25% = S, 25-50% = M, 50-75% = L, top 25% = XL
+
+    Args:
+        graph: NetworkX DiGraph with pattern and company nodes
+        companies: List of company identifiers
+
+    Returns:
+        List of MeshNode objects
+    """
+    company_metrics: Dict[str, Dict[str, Any]] = {}
+
+    for company in companies:
+        # Find patterns associated with this company
+        patterns: Set[str] = set()
+
+        for node in graph.nodes():
+            node_data = graph.nodes[node]
+            if node_data.get("company") == company:
+                # Find connected patterns
+                for neighbor in list(graph.successors(node)) + list(graph.predecessors(node)):
+                    if graph.nodes.get(neighbor, {}).get("is_pattern", False):
+                        patterns.add(neighbor)
+
+        # Sum centrality of all patterns for this company
+        total_centrality = 0.0
+        for pattern_id in patterns:
+            total_centrality += centrality(pattern_id, graph)
+
+        company_metrics[company] = {
+            "pattern_count": len(patterns),
+            "total_centrality": total_centrality,
+        }
+
+    # Compute quartiles for display_size assignment
+    centralities = [m["total_centrality"] for m in company_metrics.values()]
+
+    if centralities:
+        # Sort centralities to find quartile boundaries
+        sorted_cents = sorted(centralities)
+        n = len(sorted_cents)
+
+        if n >= 4:
+            q1 = sorted_cents[n // 4]
+            q2 = sorted_cents[n // 2]
+            q3 = sorted_cents[(3 * n) // 4]
+        elif n >= 2:
+            q1 = sorted_cents[0]
+            q2 = sorted_cents[n // 2]
+            q3 = sorted_cents[-1]
+        else:
+            q1 = q2 = q3 = sorted_cents[0] if sorted_cents else 0.0
+    else:
+        q1 = q2 = q3 = 0.0
+
+    # Assign display sizes
+    nodes: List[MeshNode] = []
+    for company in companies:
+        metrics = company_metrics.get(company, {"pattern_count": 0, "total_centrality": 0.0})
+        tc = metrics["total_centrality"]
+
+        # Quartile assignment: bottom 25% = S, 25-50% = M, 50-75% = L, top 25% = XL
+        if tc <= q1:
+            display_size = "S"
+        elif tc <= q2:
+            display_size = "M"
+        elif tc <= q3:
+            display_size = "L"
+        else:
+            display_size = "XL"
+
+        node = MeshNode(
+            company_id=company,
+            pattern_count=metrics["pattern_count"],
+            total_centrality=tc,
+            display_size=display_size,
+        )
+        nodes.append(node)
+
+    return nodes
+
+
+def _get_edge_char(entanglement: float) -> str:
+    """
+    Get edge character based on entanglement coefficient.
+
+    - < 0.3: - (thin)
+    - 0.3-0.6: = (medium)
+    - 0.6-0.9: = (thick, use = since triple-line may not render)
+    - >= 0.9: # (critical, use # for block)
+    """
+    if entanglement < EDGE_THIN_THRESHOLD:
+        return "-"
+    elif entanglement < EDGE_MEDIUM_THRESHOLD:
+        return "="
+    elif entanglement < EDGE_THICK_THRESHOLD:
+        return "="
+    else:
+        return "#"
+
+
+def _format_node_box(abbrev: str, display_size: str) -> str:
+    """
+    Format node with box based on display_size.
+
+    S: [TSL]
+    M: [[TSL]]
+    L: [[[TSL]]]
+    XL: [[[[TSL]]]]
+    """
+    size_brackets = {"S": 1, "M": 2, "L": 3, "XL": 4}
+    brackets = size_brackets.get(display_size, 1)
+    open_brackets = "[" * brackets
+    close_brackets = "]" * brackets
+    return f"{open_brackets}{abbrev}{close_brackets}"
+
+
+def render_ascii_mesh(
+    nodes: List[MeshNode],
+    edges: List[EntanglementEdge],
+) -> str:
+    """
+    Render ASCII art mesh visualization.
+
+    Per SDD line 101: ASCII output only, no pixels.
+    Per task spec:
+    - Node size encoded by bracket count (S/M/L/XL)
+    - Edge width encoded by character (- = # for thin/medium/critical)
+    - Self-interpreting with legend and danger zones
+
+    Args:
+        nodes: List of MeshNode objects
+        edges: List of EntanglementEdge objects
+
+    Returns:
+        Multiline ASCII string representing the mesh
+    """
+    lines: List[str] = []
+
+    # Header
+    lines.append("+" + "=" * 68 + "+")
+    lines.append("|" + "QED v9 ENTANGLEMENT MESH".center(68) + "|")
+    lines.append("+" + "=" * 68 + "+")
+    lines.append("|" + " " * 68 + "|")
+
+    # Build node lookup
+    node_lookup: Dict[str, MeshNode] = {n.company_id: n for n in nodes}
+
+    # Group edges by company pairs for cleaner display
+    pair_edges: Dict[Tuple[str, str], List[EntanglementEdge]] = defaultdict(list)
+    for edge in edges:
+        pair_key = tuple(sorted([edge.source_company, edge.target_company]))
+        pair_edges[pair_key].append(edge)
+
+    # Create a simple grid layout for companies
+    # Row 1: tesla, spacex, starlink
+    # Row 2: boring, neuralink, xai
+    grid = [
+        ["tesla", "spacex", "starlink"],
+        ["boring", "neuralink", "xai"],
+    ]
+
+    # Render grid rows
+    for row_idx, row in enumerate(grid):
+        # Node row
+        node_line = "|  "
+        for col_idx, company in enumerate(row):
+            node = node_lookup.get(company)
+            if node:
+                abbrev = COMPANY_ABBREV.get(company, company[:3].upper())
+                box = _format_node_box(abbrev, node.display_size)
+                node_line += box.center(20)
+            else:
+                node_line += " " * 20
+        node_line = node_line[:69].ljust(69) + "|"
+        lines.append(node_line)
+
+        # Edge row (horizontal connections within row)
+        if row_idx < len(grid):
+            edge_line = "|  "
+            for col_idx in range(len(row) - 1):
+                pair_key = tuple(sorted([row[col_idx], row[col_idx + 1]]))
+                if pair_key in pair_edges:
+                    # Get highest entanglement edge for this pair
+                    best_edge = max(pair_edges[pair_key], key=lambda e: e.entanglement_coefficient)
+                    char = _get_edge_char(best_edge.entanglement_coefficient)
+                    label = f"({best_edge.pattern_id[:8]}: {best_edge.entanglement_coefficient:.2f})"
+                    edge_str = char * 8 + label[:20]
+                else:
+                    edge_str = " " * 28
+                edge_line += edge_str.center(20)
+            edge_line = edge_line[:69].ljust(69) + "|"
+            lines.append(edge_line)
+
+        # Vertical connection row (between grid rows)
+        if row_idx < len(grid) - 1:
+            vert_line = "|  "
+            for col_idx, company in enumerate(row):
+                below_company = grid[row_idx + 1][col_idx] if col_idx < len(grid[row_idx + 1]) else None
+                if below_company:
+                    pair_key = tuple(sorted([company, below_company]))
+                    if pair_key in pair_edges:
+                        best_edge = max(pair_edges[pair_key], key=lambda e: e.entanglement_coefficient)
+                        char = _get_edge_char(best_edge.entanglement_coefficient)
+                        vert_line += f"   {char}   ".center(20)
+                    else:
+                        vert_line += "|".center(20)
+                else:
+                    vert_line += " " * 20
+            vert_line = vert_line[:69].ljust(69) + "|"
+            lines.append(vert_line)
+
+    lines.append("|" + " " * 68 + "|")
+
+    # Legend
+    lines.append("+" + "-" * 68 + "+")
+    lines.append("| LEGEND: Node size = value (centrality)".ljust(69) + "|")
+    lines.append("|         Edge width = risk (entanglement)".ljust(69) + "|")
+    lines.append("|         - thin (<0.3)  = medium (0.3-0.6)  # CRITICAL (>=0.9)".ljust(69) + "|")
+    lines.append("|         [X]=S  [[X]]=M  [[[X]]]=L  [[[[X]]]]=XL".ljust(69) + "|")
+
+    # Danger zones
+    danger_edges = [e for e in edges if e.entanglement_coefficient >= DEFAULT_ENTANGLEMENT_THRESHOLD
+                    and e.shared_centrality <= DEFAULT_CENTRALITY_THRESHOLD]
+
+    if danger_edges:
+        lines.append("+" + "-" * 68 + "+")
+        lines.append("| DANGER ZONES: high entanglement + low centrality = systemic risk".ljust(69) + "|")
+        for edge in danger_edges[:5]:  # Show top 5
+            src_abbrev = COMPANY_ABBREV.get(edge.source_company, edge.source_company[:3].upper())
+            tgt_abbrev = COMPANY_ABBREV.get(edge.target_company, edge.target_company[:3].upper())
+            danger_str = f"|  ! {edge.pattern_id[:12]} ({src_abbrev}<->{tgt_abbrev}): e={edge.entanglement_coefficient:.2f}, c={edge.shared_centrality:.2f}"
+            lines.append(danger_str.ljust(69) + "|")
+
+    lines.append("+" + "=" * 68 + "+")
+
+    return "\n".join(lines)
+
+
+def identify_danger_zones(
+    nodes: List[MeshNode],
+    edges: List[EntanglementEdge],
+    entanglement_threshold: float = DEFAULT_ENTANGLEMENT_THRESHOLD,
+    centrality_threshold: float = DEFAULT_CENTRALITY_THRESHOLD,
+) -> List[Dict[str, Any]]:
+    """
+    Identify high-risk, low-value patterns (danger zones).
+
+    Danger zones: entanglement >= threshold AND shared_centrality <= centrality_threshold
+    These are systemic risks without payoff - highly connected but low value.
+
+    Args:
+        nodes: List of MeshNode (used for context)
+        edges: List of EntanglementEdge to analyze
+        entanglement_threshold: Minimum entanglement for danger (default 0.8)
+        centrality_threshold: Maximum centrality for danger (default 0.3)
+
+    Returns:
+        List of danger zone dicts with pattern_id, companies, entanglement, centrality, risk_reason
+    """
+    danger_zones: List[Dict[str, Any]] = []
+
+    for edge in edges:
+        if (edge.entanglement_coefficient >= entanglement_threshold and
+                edge.shared_centrality <= centrality_threshold):
+            danger_zones.append({
+                "pattern_id": edge.pattern_id,
+                "companies": [edge.source_company, edge.target_company],
+                "entanglement": edge.entanglement_coefficient,
+                "centrality": edge.shared_centrality,
+                "risk_reason": f"High entanglement ({edge.entanglement_coefficient:.2f}) with low centrality ({edge.shared_centrality:.2f}) - systemic risk without payoff",
+            })
+
+    # Sort by risk (high entanglement * low centrality = highest risk)
+    danger_zones.sort(
+        key=lambda d: d["entanglement"] * (1.0 - d["centrality"]),
+        reverse=True
+    )
+
+    return danger_zones
+
+
+def mesh_summary(
+    nodes: List[MeshNode],
+    edges: List[EntanglementEdge],
+) -> Dict[str, Any]:
+    """
+    Compute summary statistics for the mesh.
+
+    Args:
+        nodes: List of MeshNode objects
+        edges: List of EntanglementEdge objects
+
+    Returns:
+        Dict with: total_nodes, total_edges, avg_entanglement, max_entanglement,
+                   danger_zone_count, healthiest_company, riskiest_edge
+    """
+    total_nodes = len(nodes)
+    total_edges = len(edges)
+
+    # Entanglement statistics
+    if edges:
+        entanglements = [e.entanglement_coefficient for e in edges]
+        avg_entanglement = statistics.mean(entanglements)
+        max_entanglement = max(entanglements)
+        riskiest_edge = max(edges, key=lambda e: e.entanglement_coefficient)
+        riskiest_edge_dict = riskiest_edge.to_dict()
+    else:
+        avg_entanglement = 0.0
+        max_entanglement = 0.0
+        riskiest_edge_dict = None
+
+    # Danger zone count
+    danger_zones = identify_danger_zones(nodes, edges)
+    danger_zone_count = len(danger_zones)
+
+    # Healthiest company (highest total centrality)
+    if nodes:
+        healthiest = max(nodes, key=lambda n: n.total_centrality)
+        healthiest_company = healthiest.company_id
+    else:
+        healthiest_company = None
+
+    return {
+        "total_nodes": total_nodes,
+        "total_edges": total_edges,
+        "avg_entanglement": avg_entanglement,
+        "max_entanglement": max_entanglement,
+        "danger_zone_count": danger_zone_count,
+        "healthiest_company": healthiest_company,
+        "riskiest_edge": riskiest_edge_dict,
+    }
+
+
+def generate_mesh(
+    manifest_path: Optional[str] = None,
+    receipts_path: Optional[str] = None,
+    graph: Optional[nx.DiGraph] = None,
+    companies: Optional[List[str]] = None,
+    sample_n: int = 100,
+) -> Dict[str, Any]:
+    """
+    Generate mesh view with entanglement edges and centrality sizing.
+
+    Backward compatible: if no graph provided, falls back to v1/v2 behavior.
+    If graph provided: computes entanglement edges and centrality-based sizing.
+
+    Args:
+        manifest_path: Path to qed_run_manifest.json (optional, v1/v2 compat)
+        receipts_path: Path to receipts.jsonl (optional, v1/v2 compat)
+        graph: NetworkX DiGraph with pattern/company nodes (v9 mode)
+        companies: Company identifiers (default: all 6 companies)
+        sample_n: Number of receipts to sample if building from files
+
+    Returns:
+        Dict containing mesh_receipt with nodes, edges, danger_zones, summary
+    """
+    if companies is None:
+        companies = DEFAULT_COMPANIES
+
+    # V9 mode: graph provided
+    if graph is not None:
+        mesh_nodes = build_mesh_nodes(graph, companies)
+        mesh_edges = build_entanglement_edges(graph, companies)
+        danger_zones = identify_danger_zones(mesh_nodes, mesh_edges)
+        summary = mesh_summary(mesh_nodes, mesh_edges)
+        ascii_mesh = render_ascii_mesh(mesh_nodes, mesh_edges)
+
+        # Generate receipt ID
+        content = json.dumps({
+            "companies": sorted(companies),
+            "node_count": len(mesh_nodes),
+            "edge_count": len(mesh_edges),
+        }, separators=(",", ":"))
+        receipt_id = hashlib.sha3_256(content.encode()).hexdigest()[:16]
+
+        return {
+            "type": "mesh_receipt",
+            "receipt_id": receipt_id,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "nodes": [n.to_dict() for n in mesh_nodes],
+            "edges": [e.to_dict() for e in mesh_edges],
+            "danger_zones": danger_zones,
+            "summary": summary,
+            "ascii_mesh": ascii_mesh,
+        }
+
+    # V1/V2 fallback: build from receipts files
+    if receipts_path:
+        receipts = sample_receipts(receipts_path, sample_n)
+
+        # Build graph from receipts using causal_graph
+        graph = build_causal_graph(receipts)
+
+        # Add company information to nodes
+        for receipt in receipts:
+            node_id = receipt.get("receipt_id") or receipt.get("window_id")
+            if node_id and node_id in graph:
+                hook = extract_hook_from_receipt(receipt)
+                company = parse_company_from_hook(hook)
+                if company in companies:
+                    graph.nodes[node_id]["company"] = company
+
+        # Now run v9 mode with the built graph
+        return generate_mesh(graph=graph, companies=companies)
+
+    # Minimal fallback: empty mesh
+    return {
+        "type": "mesh_receipt",
+        "receipt_id": hashlib.sha3_256(b"empty").hexdigest()[:16],
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "nodes": [],
+        "edges": [],
+        "danger_zones": [],
+        "summary": {
+            "total_nodes": 0,
+            "total_edges": 0,
+            "avg_entanglement": 0.0,
+            "max_entanglement": 0.0,
+            "danger_zone_count": 0,
+            "healthiest_company": None,
+            "riskiest_edge": None,
+        },
+        "ascii_mesh": "",
+    }
+
+
+# =============================================================================
 # Module Exports
 # =============================================================================
 
@@ -1632,7 +2287,7 @@ __all__ = [
     'build_company_table',
     'compute_exploit_count',
     'compute_cross_domain_links',
-    # v3 new
+    # v3/v8 deployment graph
     'build',
     'DeploymentGraph',
     'DeploymentNode',
@@ -1654,4 +2309,17 @@ __all__ = [
     'to_dot',
     'save',
     'export_for_ui',
+    # v9 entanglement mesh (new)
+    'RECEIPT_SCHEMA',
+    'COMPANY_ABBREV',
+    'ABBREV_COMPANY',
+    'DEFAULT_COMPANIES',
+    'EntanglementEdge',
+    'MeshNode',
+    'build_entanglement_edges',
+    'build_mesh_nodes',
+    'render_ascii_mesh',
+    'identify_danger_zones',
+    'mesh_summary',
+    'generate_mesh',
 ]
