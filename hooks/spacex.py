@@ -433,6 +433,33 @@ def get_cross_domain_config() -> Dict[str, Any]:
     }
 
 
+def get_deployment_config() -> Dict[str, Any]:
+    """Return SpaceX-specific QEDConfig defaults for launch-critical telemetry."""
+    return {
+        "hook": "spacex",
+        "recall_floor": 0.99995,
+        "max_fp_rate": 0.001,
+        "slo_latency_ms": 10,
+        "slo_breach_budget": 0.0001,
+        "compression_target": 15.0,
+        "enabled_patterns": ["PAT_PROPULSION_*", "PAT_AVIONICS_*", "PAT_THERMAL_*", "PAT_TRAJECTORY_*"],
+        "regulatory_flags": {"FAA": True, "ITAR": True, "NASA_NPR": True},
+        "safety_critical": True,
+    }
+
+
+def get_hardware_profile() -> Dict[str, Any]:
+    """Return SpaceX hardware identifiers for mesh_view clustering."""
+    return {
+        "platform": "flight_computer",
+        "compute_class": "radiation_hardened",
+        "connectivity": "rf_link",
+        "storage_type": "redundant_flash",
+        "real_time": True,
+        "safety_critical": True,
+    }
+
+
 def get_edge_lab_scenarios() -> List[Dict[str, Any]]:
     """
     Return edge lab test scenarios for SpaceX telemetry.

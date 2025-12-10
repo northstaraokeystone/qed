@@ -236,6 +236,33 @@ def get_cross_domain_config() -> Dict[str, Any]:
     }
 
 
+def get_deployment_config() -> Dict[str, Any]:
+    """Return Starlink-specific QEDConfig defaults for satellite fleet telemetry."""
+    return {
+        "hook": "starlink",
+        "recall_floor": 0.999,
+        "max_fp_rate": 0.01,
+        "slo_latency_ms": 100,
+        "slo_breach_budget": 0.005,
+        "compression_target": 50.0,
+        "enabled_patterns": ["PAT_ORBITAL_*", "PAT_LINK_*", "PAT_THERMAL_*", "PAT_POWER_*"],
+        "regulatory_flags": {"FCC": True, "ITU": True},
+        "safety_critical": False,
+    }
+
+
+def get_hardware_profile() -> Dict[str, Any]:
+    """Return Starlink hardware identifiers for mesh_view clustering."""
+    return {
+        "platform": "satellite_bus",
+        "compute_class": "embedded_leo",
+        "connectivity": "laser_mesh",
+        "storage_type": "minimal_flash",
+        "real_time": False,
+        "safety_critical": False,
+    }
+
+
 def get_edge_lab_scenarios() -> List[Dict[str, Any]]:
     """
     Return edge lab test scenarios for Starlink telemetry.

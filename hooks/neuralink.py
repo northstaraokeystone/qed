@@ -283,6 +283,33 @@ def get_cross_domain_config() -> Dict[str, Any]:
     }
 
 
+def get_deployment_config() -> Dict[str, Any]:
+    """Return Neuralink-specific QEDConfig defaults for medical-grade neural telemetry."""
+    return {
+        "hook": "neuralink",
+        "recall_floor": 0.999999,
+        "max_fp_rate": 0.0001,
+        "slo_latency_ms": 5,
+        "slo_breach_budget": 0.00001,
+        "compression_target": 5.0,
+        "enabled_patterns": ["PAT_NEURAL_*", "PAT_IMPLANT_*", "PAT_POWER_*", "PAT_THERMAL_*"],
+        "regulatory_flags": {"FDA": True, "HIPAA": True, "ISO13485": True, "IEC62304": True},
+        "safety_critical": True,
+    }
+
+
+def get_hardware_profile() -> Dict[str, Any]:
+    """Return Neuralink hardware identifiers for mesh_view clustering."""
+    return {
+        "platform": "implant_asic",
+        "compute_class": "ultra_low_power",
+        "connectivity": "wireless_implant",
+        "storage_type": "none",
+        "real_time": True,
+        "safety_critical": True,
+    }
+
+
 def get_edge_lab_scenarios() -> List[Dict[str, Any]]:
     """
     Return edge lab test scenarios for Neuralink neural telemetry.

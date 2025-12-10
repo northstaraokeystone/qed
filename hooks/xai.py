@@ -737,6 +737,33 @@ def get_cross_domain_config() -> Dict[str, Any]:
     }
 
 
+def get_deployment_config() -> Dict[str, Any]:
+    """Return xAI-specific QEDConfig defaults for AI inference telemetry."""
+    return {
+        "hook": "xai",
+        "recall_floor": 0.995,
+        "max_fp_rate": 0.02,
+        "slo_latency_ms": 500,
+        "slo_breach_budget": 0.01,
+        "compression_target": 30.0,
+        "enabled_patterns": ["PAT_INFERENCE_*", "PAT_TRAINING_*", "PAT_GPU_*", "PAT_MEMORY_*"],
+        "regulatory_flags": {"SOC2": True, "GDPR": True},
+        "safety_critical": False,
+    }
+
+
+def get_hardware_profile() -> Dict[str, Any]:
+    """Return xAI hardware identifiers for mesh_view clustering."""
+    return {
+        "platform": "gpu_cluster",
+        "compute_class": "datacenter",
+        "connectivity": "infiniband",
+        "storage_type": "distributed_nvme",
+        "real_time": False,
+        "safety_critical": False,
+    }
+
+
 def get_edge_lab_scenarios() -> List[Dict[str, Any]]:
     """
     Return edge lab test scenarios for xAI LLM telemetry.

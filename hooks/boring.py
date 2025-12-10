@@ -228,6 +228,33 @@ def get_cross_domain_config() -> Dict[str, Any]:
     }
 
 
+def get_deployment_config() -> Dict[str, Any]:
+    """Return Boring Company-specific QEDConfig defaults for tunneling telemetry."""
+    return {
+        "hook": "boring",
+        "recall_floor": 0.9995,
+        "max_fp_rate": 0.005,
+        "slo_latency_ms": 200,
+        "slo_breach_budget": 0.002,
+        "compression_target": 20.0,
+        "enabled_patterns": ["PAT_TBM_*", "PAT_STRUCTURAL_*", "PAT_HVAC_*", "PAT_TRANSPORT_*"],
+        "regulatory_flags": {"OSHA": True, "MSHA": True, "DOT": True},
+        "safety_critical": True,
+    }
+
+
+def get_hardware_profile() -> Dict[str, Any]:
+    """Return Boring Company hardware identifiers for mesh_view clustering."""
+    return {
+        "platform": "tbm_controller",
+        "compute_class": "industrial",
+        "connectivity": "fiber_wired",
+        "storage_type": "ruggedized_ssd",
+        "real_time": False,
+        "safety_critical": True,
+    }
+
+
 def get_edge_lab_scenarios() -> List[Dict[str, Any]]:
     """
     Return edge lab test scenarios for Boring Company TBM telemetry.
