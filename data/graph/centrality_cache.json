@@ -1,0 +1,29 @@
+{
+  "schema_version": "v9.0",
+  "cache_type": "centrality",
+  "computed_at": "2024-01-01T00:00:00Z",
+  "valid": false,
+  "invalidation_trigger": {
+    "source": "data/receipts.jsonl",
+    "last_known_hash": {
+      "sha256": "",
+      "blake3": ""
+    },
+    "last_known_line_count": 0
+  },
+  "algorithm": "pagerank",
+  "algorithm_params": {
+    "damping_factor": 0.85,
+    "max_iterations": 100,
+    "convergence_threshold": 0.0001
+  },
+  "values": {},
+  "statistics": {
+    "total_nodes": 0,
+    "mean_centrality": 0.0,
+    "max_centrality": 0.0,
+    "min_centrality": 0.0,
+    "nodes_above_floor": 0,
+    "floor_threshold": 0.2
+  }
+}
