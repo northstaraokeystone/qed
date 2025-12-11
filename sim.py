@@ -50,6 +50,11 @@ CRITICALITY_ALERT_THRESHOLD = 0.95  # Alert before phase transition
 CRITICALITY_PHASE_TRANSITION = 1.0  # The quantum leap point
 ALERT_COOLDOWN_CYCLES = 50  # Prevent alert spam near threshold
 
+# Perturbation constants (stochastic GW kicks)
+PERTURBATION_PROBABILITY = 0.01  # 1% chance per cycle
+PERTURBATION_MAGNITUDE = 0.03   # size of kick
+PERTURBATION_DECAY = 0.8        # kick decays 20% per cycle
+
 # Module exports for receipt types
 RECEIPT_SCHEMA = [
     "sim_config", "sim_cycle", "sim_birth", "sim_death",
@@ -115,6 +120,9 @@ class SimState:
     phase_transition_occurred: bool = False
     observer_wake_count: int = 0
     previous_criticality: float = 0.0
+    # Perturbation fields
+    perturbation_boost: float = 0.0
+    horizon_crossings: int = 0
 
 
 @dataclass(frozen=True)
@@ -391,6 +399,29 @@ def simulate_cycle(state: SimState, config: SimConfig) -> List[dict]:
 
     # Update previous criticality for next cycle
     state.previous_criticality = criticality
+
+    # Perturbation check (stochastic, like wound injection)
+    perturbation_receipt = check_perturbation(state, state.cycle)
+    if perturbation_receipt:
+        state.receipt_ledger.append(perturbation_receipt)
+
+    # Effective criticality for threshold checks
+    effective_crit = criticality + state.perturbation_boost
+
+    # Horizon crossing check
+    if effective_crit >= 1.0 and not state.phase_transition_occurred:
+        state.horizon_crossings += 1
+        state.phase_transition_occurred = True
+        # Emit horizon_crossing receipt
+        horizon_crossing_receipt = emit_receipt("horizon_crossing", {
+            "tenant_id": "simulation",
+            "cycle": state.cycle,
+            "base_criticality": criticality,
+            "perturbation_boost": state.perturbation_boost,
+            "effective_criticality": effective_crit,
+            "crossing_number": state.horizon_crossings
+        })
+        state.receipt_ledger.append(horizon_crossing_receipt)
 
     hawking_flux_receipt = emit_hawking_flux_receipt(
         state, state.cycle, flux, trend, collapse_rate, emergence_rate, criticality,
@@ -757,6 +788,33 @@ def simulate_completeness(state: SimState) -> None:
                 "godel_layer": godel_layer()
             })
             state.receipt_ledger.append(receipt)
+
+
+def check_perturbation(state: SimState, cycle: int) -> Optional[dict]:
+    """
+    Stochastic GW kick. Returns receipt if fired, None otherwise.
+
+    Args:
+        state: Current SimState (mutated in place)
+        cycle: Current cycle number
+
+    Returns:
+        Receipt dict if perturbation fired, None otherwise
+    """
+    # Decay existing boost first
+    state.perturbation_boost *= PERTURBATION_DECAY
+
+    # Random chance of new kick
+    if random.random() < PERTURBATION_PROBABILITY:
+        state.perturbation_boost += PERTURBATION_MAGNITUDE
+        return {
+            "receipt_type": "perturbation",
+            "cycle": cycle,
+            "magnitude": PERTURBATION_MAGNITUDE,
+            "total_boost": state.perturbation_boost,
+            "source": "gravitational_wave"
+        }
+    return None
 
 
 # =============================================================================
@@ -1506,7 +1564,10 @@ def emit_hawking_flux_receipt(state: SimState, cycle: int, flux: float,
         "flux_history_length": len(state.flux_history),
         "entropy_delta": entropy_delta,
         "criticality_alert_active": criticality_alert_active,
-        "cycles_to_transition": cycles_to_transition
+        "cycles_to_transition": cycles_to_transition,
+        "perturbation_boost": state.perturbation_boost,
+        "effective_criticality": criticality + state.perturbation_boost,
+        "horizon_crossings": state.horizon_crossings
     })
 
 
