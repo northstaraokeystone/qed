@@ -7,7 +7,6 @@ reduction per receipt. Runs Thompson sampling for selection pressure.
 CLAUDEME v3.1 Compliant: SCHEMA + EMIT + TEST + STOPRULE for each receipt type.
 """
 
-import hashlib
 import json
 import math
 import random
@@ -16,40 +15,10 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Tuple
 
 # =============================================================================
-# CLAUDEME §8 CORE FUNCTIONS
+# CLAUDEME §8 CORE FUNCTIONS - Import from receipts.py (v6 foundation)
 # =============================================================================
 
-try:
-    import blake3
-    HAS_BLAKE3 = True
-except ImportError:
-    HAS_BLAKE3 = False
-
-
-def dual_hash(data: bytes | str) -> str:
-    """SHA256:BLAKE3 - ALWAYS use this, never single hash."""
-    if isinstance(data, str):
-        data = data.encode()
-    sha = hashlib.sha256(data).hexdigest()
-    b3 = blake3.blake3(data).hexdigest() if HAS_BLAKE3 else sha
-    return f"{sha}:{b3}"
-
-
-def emit_receipt(receipt_type: str, data: dict) -> dict:
-    """Every function calls this. No exceptions."""
-    receipt = {
-        "receipt_type": receipt_type,
-        "ts": datetime.now(timezone.utc).isoformat(),
-        "tenant_id": data.get("tenant_id", "default"),
-        "payload_hash": dual_hash(json.dumps(data, sort_keys=True)),
-        **data
-    }
-    return receipt
-
-
-class StopRule(Exception):
-    """Raised when stoprule triggers. Never catch silently."""
-    pass
+from receipts import dual_hash, emit_receipt, StopRule
 
 
 # =============================================================================
