@@ -51,14 +51,19 @@ CRITICALITY_PHASE_TRANSITION = 1.0  # The quantum leap point
 ALERT_COOLDOWN_CYCLES = 50  # Prevent alert spam near threshold
 
 # Perturbation constants (stochastic GW kicks)
-PERTURBATION_PROBABILITY = 0.1   # 10% chance per cycle (more frequent events)
-PERTURBATION_MAGNITUDE = 0.08    # size of kick (stronger kicks)
-PERTURBATION_DECAY = 0.7         # kick decays 30% per cycle (base decay before non-linear factor)
-PERTURBATION_VARIANCE = 0.2      # chaotic variance in magnitude (more chaos)
-BASIN_ESCAPE_THRESHOLD = 0.15    # escape detection threshold (higher bar)
-CLUSTER_LAMBDA = 2               # Poisson parameter for cluster size (avg 2 kicks per event)
+PERTURBATION_PROBABILITY = 0.15  # 15% chance per cycle (more frequent events)
+PERTURBATION_MAGNITUDE = 0.1     # size of kick (stronger kicks)
+PERTURBATION_DECAY = 0.65        # kick decays 35% per cycle (base decay before non-linear factor)
+PERTURBATION_VARIANCE = 0.25     # chaotic variance in magnitude (more chaos)
+BASIN_ESCAPE_THRESHOLD = 0.2     # escape detection threshold (higher bar)
+CLUSTER_LAMBDA = 3               # Poisson parameter for cluster size (avg 3 kicks per event)
 MAX_CLUSTER_SIZE = 5             # Safety cap on cluster size (prevent explosion)
-NONLINEAR_DECAY_FACTOR = 0.1     # Non-linear decay acceleration (higher boost = faster decay)
+NONLINEAR_DECAY_FACTOR = 0.15    # Non-linear decay acceleration (higher boost = faster decay)
+
+# Adaptive feedback constants (threshold-based state changes)
+ADAPTIVE_THRESHOLD = 0.2         # triggers probability boost when boost > threshold
+ADAPTIVE_BOOST = 0.05            # probability increase amount
+MAX_PROBABILITY = 0.5            # cap to prevent runaway
 
 # Module exports for receipt types
 RECEIPT_SCHEMA = [
@@ -129,6 +134,11 @@ class SimState:
     perturbation_boost: float = 0.0
     horizon_crossings: int = 0
     escape_count: int = 0  # number of cycles where boost > BASIN_ESCAPE_THRESHOLD
+    # Adaptive feedback fields
+    consecutive_escapes: int = 0  # track consecutive cycles above threshold
+    cycles_since_crossing: int = 0  # post-breach stability counter
+    max_consecutive_escapes: int = 0  # track emergent structure peak
+    adaptive_triggers: int = 0  # count how often adaptive kicked in
 
 
 @dataclass(frozen=True)
@@ -402,6 +412,10 @@ def simulate_cycle(state: SimState, config: SimConfig) -> List[dict]:
 
     # Check for phase transition
     check_phase_transition(state, state.cycle, criticality, H_end)
+
+    # Track cycles since crossing (post-breach stability)
+    if state.phase_transition_occurred:
+        state.cycles_since_crossing += 1
 
     # Update previous criticality for next cycle
     state.previous_criticality = criticality
@@ -828,12 +842,40 @@ def poisson_manual(lam: float) -> int:
     return k - 1
 
 
+def compute_effective_probability(state: SimState) -> float:
+    """
+    Compute effective perturbation probability with adaptive feedback.
+
+    Base probability increases when perturbation_boost > ADAPTIVE_THRESHOLD.
+    This creates a feedback loop: threshold crossings boost probability.
+
+    Args:
+        state: Current SimState
+
+    Returns:
+        float: Effective probability (capped at MAX_PROBABILITY)
+    """
+    base_prob = PERTURBATION_PROBABILITY
+
+    # Adaptive feedback: boost probability if above threshold
+    if state.perturbation_boost > ADAPTIVE_THRESHOLD:
+        effective_prob = base_prob + ADAPTIVE_BOOST
+    else:
+        effective_prob = base_prob
+
+    # Cap at MAX_PROBABILITY to prevent runaway
+    effective_prob = min(effective_prob, MAX_PROBABILITY)
+
+    return effective_prob
+
+
 def check_perturbation(state: SimState, cycle: int) -> Optional[dict]:
     """
-    Stochastic GW kick with Poisson clusters and non-linear decay.
+    Stochastic GW kick with Poisson clusters, non-linear decay, and adaptive feedback.
 
     Non-linear decay: Higher boost = faster decay (self-limiting chaos).
     Poisson clusters: Multiple kicks per event (bursts, not single kicks).
+    Adaptive feedback: Probability increases when boost > ADAPTIVE_THRESHOLD.
 
     Args:
         state: Current SimState (mutated in place)
@@ -851,8 +893,16 @@ def check_perturbation(state: SimState, cycle: int) -> Optional[dict]:
     # Ensure boost doesn't go negative
     state.perturbation_boost = max(0.0, state.perturbation_boost)
 
-    # Random chance of new kick cluster
-    if random.random() < PERTURBATION_PROBABILITY:
+    # Get effective probability (with adaptive feedback)
+    effective_prob = compute_effective_probability(state)
+    adaptive_active = state.perturbation_boost > ADAPTIVE_THRESHOLD
+
+    # Track adaptive triggers
+    if adaptive_active:
+        state.adaptive_triggers += 1
+
+    # Random chance of new kick cluster (using effective probability)
+    if random.random() < effective_prob:
         # Generate cluster size using Poisson distribution, capped at MAX_CLUSTER_SIZE
         cluster_size = min(poisson_manual(CLUSTER_LAMBDA), MAX_CLUSTER_SIZE)
 
@@ -872,6 +922,8 @@ def check_perturbation(state: SimState, cycle: int) -> Optional[dict]:
             "total_added": total_added,
             "total_boost": state.perturbation_boost,
             "decay_rate_at_emission": decay_rate,
+            "effective_probability": effective_prob,
+            "adaptive_active": adaptive_active,
             "source": "gravitational_wave_cluster"
         }
     return None
@@ -881,6 +933,9 @@ def check_basin_escape(state: SimState, cycle: int) -> Optional[dict]:
     """
     Check if system is escaping attractor basin (perturbation_boost > threshold).
 
+    Tracks consecutive escapes for emergent structure detection.
+    Resets consecutive_escapes when boost drops below threshold.
+
     Args:
         state: Current SimState (mutated in place)
         cycle: Current cycle number
@@ -889,15 +944,27 @@ def check_basin_escape(state: SimState, cycle: int) -> Optional[dict]:
         Receipt dict if escape detected, None otherwise
     """
     if state.perturbation_boost > BASIN_ESCAPE_THRESHOLD:
+        # Increment consecutive escapes
+        state.consecutive_escapes += 1
         state.escape_count += 1
+
+        # Update max_consecutive_escapes if current is higher
+        if state.consecutive_escapes > state.max_consecutive_escapes:
+            state.max_consecutive_escapes = state.consecutive_escapes
+
         escape_probability = compute_escape_probability(state, cycle)
         return {
             "receipt_type": "basin_escape",
             "cycle": cycle,
             "boost_at_escape": state.perturbation_boost,
             "escape_count": state.escape_count,
+            "consecutive_escapes": state.consecutive_escapes,
+            "max_consecutive_escapes": state.max_consecutive_escapes,
             "escape_probability": escape_probability
         }
+    else:
+        # Reset consecutive escapes when boost drops below threshold
+        state.consecutive_escapes = 0
     return None
 
 
@@ -1674,7 +1741,11 @@ def emit_hawking_flux_receipt(state: SimState, cycle: int, flux: float,
         "effective_criticality": criticality + state.perturbation_boost,
         "horizon_crossings": state.horizon_crossings,
         "escape_count": state.escape_count,
-        "escape_probability": escape_probability
+        "escape_probability": escape_probability,
+        "consecutive_escapes": state.consecutive_escapes,
+        "max_consecutive_escapes": state.max_consecutive_escapes,
+        "cycles_since_crossing": state.cycles_since_crossing,
+        "adaptive_triggers": state.adaptive_triggers
     })
 
 
