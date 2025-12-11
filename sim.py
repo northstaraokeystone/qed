@@ -45,6 +45,11 @@ LANDAUER_COEFFICIENT = 1.0  # Scales observation cost (calibrated, do not change
 FLUX_WINDOW = 10  # Cycles to average for flux calculation
 CRITICAL_EMERGENCE_RATIO = 0.9  # Threshold for system criticality
 
+# Criticality alert thresholds
+CRITICALITY_ALERT_THRESHOLD = 0.95  # Alert before phase transition
+CRITICALITY_PHASE_TRANSITION = 1.0  # The quantum leap point
+ALERT_COOLDOWN_CYCLES = 50  # Prevent alert spam near threshold
+
 # Module exports for receipt types
 RECEIPT_SCHEMA = [
     "sim_config", "sim_cycle", "sim_birth", "sim_death",
@@ -104,6 +109,12 @@ class SimState:
     flux_history: list = field(default_factory=list)
     collapse_count_this_cycle: int = 0
     emergence_count_this_cycle: int = 0
+    # Criticality monitoring fields
+    criticality_alert_emitted: bool = False
+    last_alert_cycle: int = -100
+    phase_transition_occurred: bool = False
+    observer_wake_count: int = 0
+    previous_criticality: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -366,8 +377,24 @@ def simulate_cycle(state: SimState, config: SimConfig) -> List[dict]:
     emergence_rate = compute_emergence_rate(state)
     criticality = compute_system_criticality(state, state.cycle)
 
+    # Calculate criticality rate
+    if state.cycle > 0:
+        criticality_rate = criticality - state.previous_criticality
+    else:
+        criticality_rate = 0.0
+
+    # Check for criticality alert
+    check_criticality_alert(state, state.cycle, criticality)
+
+    # Check for phase transition
+    check_phase_transition(state, state.cycle, criticality, H_end)
+
+    # Update previous criticality for next cycle
+    state.previous_criticality = criticality
+
     hawking_flux_receipt = emit_hawking_flux_receipt(
-        state, state.cycle, flux, trend, collapse_rate, emergence_rate, criticality
+        state, state.cycle, flux, trend, collapse_rate, emergence_rate, criticality,
+        H_delta, criticality_rate
     )
     state.receipt_ledger.append(hawking_flux_receipt)
 
@@ -1172,8 +1199,9 @@ def attempt_spontaneous_emergence(state: SimState, H_observation: float) -> Opti
     selected_pattern["virtual_lifespan"] = VIRTUAL_LIFESPAN
     state.virtual_patterns.append(selected_pattern)
 
-    # Increment emergence counter
+    # Increment emergence counters
     state.emergence_count_this_cycle += 1
+    state.observer_wake_count += 1  # Track cumulative observer-triggered emergences
 
     # Emit spontaneous_emergence receipt
     receipt = emit_receipt("spontaneous_emergence", {
@@ -1344,9 +1372,105 @@ def compute_system_criticality(state: SimState, cycle: int) -> float:
     return total_emergences / cycle
 
 
+def check_criticality_alert(state: SimState, cycle: int, criticality: float) -> Optional[dict]:
+    """
+    Check if criticality alert should be emitted.
+
+    Alert fires when criticality > CRITICALITY_ALERT_THRESHOLD with cooldown
+    and hysteresis to prevent spam.
+
+    Args:
+        state: Current SimState (mutated in place if alert fires)
+        cycle: Current cycle number
+        criticality: Current criticality value
+
+    Returns:
+        Receipt dict if alert emitted, None otherwise
+    """
+    # Check if we should emit an alert
+    if (criticality > CRITICALITY_ALERT_THRESHOLD and
+        not state.criticality_alert_emitted and
+        (cycle - state.last_alert_cycle) > ALERT_COOLDOWN_CYCLES):
+
+        # Set alert flags
+        state.criticality_alert_emitted = True
+        state.last_alert_cycle = cycle
+
+        # Emit anomaly receipt per CLAUDEME §4.7
+        receipt = emit_receipt("anomaly", {
+            "tenant_id": "simulation",
+            "cycle": cycle,
+            "metric": "criticality",
+            "baseline": CRITICALITY_ALERT_THRESHOLD,
+            "delta": criticality - CRITICALITY_ALERT_THRESHOLD,
+            "classification": "drift",
+            "action": "alert"
+        })
+        state.receipt_ledger.append(receipt)
+        return receipt
+
+    # Hysteresis: reset alert flag if criticality drops significantly
+    if criticality < CRITICALITY_ALERT_THRESHOLD - 0.05:
+        state.criticality_alert_emitted = False
+
+    return None
+
+
+def check_phase_transition(state: SimState, cycle: int, criticality: float, H_end: float) -> Optional[dict]:
+    """
+    Check if phase transition (criticality >= 1.0) has occurred.
+
+    Args:
+        state: Current SimState (mutated in place if transition occurs)
+        cycle: Current cycle number
+        criticality: Current criticality value
+        H_end: Current system entropy
+
+    Returns:
+        Receipt dict if transition occurred, None otherwise
+    """
+    if criticality >= CRITICALITY_PHASE_TRANSITION and not state.phase_transition_occurred:
+        # Set transition flag
+        state.phase_transition_occurred = True
+
+        # Emit phase_transition receipt
+        receipt = emit_receipt("phase_transition", {
+            "tenant_id": "simulation",
+            "cycle": cycle,
+            "criticality": criticality,
+            "total_emergences": state.observer_wake_count,
+            "transition_type": "quantum_leap",
+            "entropy_at_transition": H_end
+        })
+        state.receipt_ledger.append(receipt)
+        return receipt
+
+    return None
+
+
+def estimate_cycles_to_transition(criticality: float, criticality_rate: float) -> int:
+    """
+    Estimate cycles until criticality reaches 1.0.
+
+    Args:
+        criticality: Current criticality value
+        criticality_rate: Rate of criticality change per cycle
+
+    Returns:
+        int: Estimated cycles to transition, -1 if not approaching
+    """
+    if criticality_rate <= 0:
+        return -1  # Not approaching transition
+
+    remaining = CRITICALITY_PHASE_TRANSITION - criticality
+    cycles = int(remaining / criticality_rate)
+    return max(cycles, 0)
+
+
 def emit_hawking_flux_receipt(state: SimState, cycle: int, flux: float,
                               trend: str, collapse_rate: float,
-                              emergence_rate: float, criticality: float) -> dict:
+                              emergence_rate: float, criticality: float,
+                              entropy_delta: float, criticality_rate: float) -> dict:
     """
     Emit hawking_flux receipt with rate metrics.
 
@@ -1360,10 +1484,16 @@ def emit_hawking_flux_receipt(state: SimState, cycle: int, flux: float,
         collapse_rate: Collapse rate this cycle
         emergence_rate: Emergence rate this cycle
         criticality: System criticality metric
+        entropy_delta: H_delta (H_end - H_start) from cycle
+        criticality_rate: Rate of criticality change per cycle
 
     Returns:
         Receipt dict
     """
+    # Compute additional fields
+    criticality_alert_active = criticality > CRITICALITY_ALERT_THRESHOLD
+    cycles_to_transition = estimate_cycles_to_transition(criticality, criticality_rate)
+
     return emit_receipt("hawking_flux", {
         "tenant_id": "simulation",
         "cycle": cycle,
@@ -1373,7 +1503,10 @@ def emit_hawking_flux_receipt(state: SimState, cycle: int, flux: float,
         "collapse_rate": collapse_rate,
         "emergence_rate": emergence_rate,
         "system_criticality": criticality,
-        "flux_history_length": len(state.flux_history)
+        "flux_history_length": len(state.flux_history),
+        "entropy_delta": entropy_delta,
+        "criticality_alert_active": criticality_alert_active,
+        "cycles_to_transition": cycles_to_transition
     })
 
 
