@@ -10,80 +10,103 @@ QED starts from a simple observation: safety-critical systems emit far more tele
 
 The core principle: build a system where every decision—compression, anomaly detection, remediation, agent creation—leaves a receipt. These receipts become the audit trail, the training data, the fitness function, and the ground truth for the next generation of agents. Agents themselves are autocatalytic receipt patterns. The system bootstraps.
 
-v5 delivers 10x compression, ~$900M/year value at Tesla scale. v6+ layers receipts, edge validation, and mesh visibility. v7 adds physics validation and cross-company anomaly sharing. v8 wraps deployment decisions in signed packets. v9 shifts from stored state to receipt-graph topology. v10 introduces autonomous healing (HUNTER/SHEPHERD agents). v11 adds immune system protection. v12 enables agent genesis—agents proposing and breeding new agents under human-in-the-loop gates.
+v5 delivers 10x compression, ~$900M/year value at Tesla scale. v6+ layers receipts, edge validation, and mesh visibility. v7 adds physics validation and cross-company anomaly sharing. v8 wraps deployment decisions in signed packets. v9 shifts from stored state to receipt-graph topology. v10 introduces autonomous healing (HUNTER/SHEPHERD agents) with entropy measurement. v11 adds immune system protection (SELF/OTHER distinction, wound tracking). v12 enables agent genesis—patterns breeding new patterns under human-in-the-loop gates, validated by Monte Carlo simulation before production.
 
 ## Value Proposition
 
-QED baseline (v5) at Tesla scale: 10x compression on multi-billion vehicle-years → ~$900M/year savings in storage, bandwidth, and incident response. This compounds: SpaceX saves $331.7M/5yr (284% NPV), xAI at Grok scale saves $195.6B/5yr. The pattern is consistent: telemetry volume far exceeds safety relevance; compress 99.9% recall; capture both the savings and the audit trail.
+QED baseline (v5) at Tesla scale: 10x compression on multi-billion vehicle-years → ~$900M/year savings in storage, bandwidth, and incident response. This compounds: SpaceX saves $331.7M/5yr (284% NPV), xAI at Grok scale saves $195.6B/5yr. The pattern is consistent: telemetry volume far exceeds safety relevance; compress at 99.9% recall; capture both the savings and the audit trail.
 
-Higher versions (v6-v12) add auditability (receipts, manifests), cross-company learning (anomaly library), autonomous agents (HUNTER/SHEPHERD), agent breeding (ARCHITECT), and immune system protection. Each layer is optional; v5 works standalone. Layers compound linearly on v5's baseline.
+Higher versions (v6-v12) add auditability (receipts, manifests), cross-company learning (anomaly library), autonomous agents (HUNTER/SHEPHERD), agent breeding (ARCHITECT), immune system protection, and simulation-first validation. Each layer is optional; v5 works standalone. Layers compound linearly on v5's baseline.
 
 ## Version Overview
 
 | Version | Milestone | Key Capability |
-|---------|-----------|---|
+|---------|-----------|----------------|
 | **v5** | Baseline | Single engine (qed.py) + 5 hooks; 10x compression; $900M/yr at Tesla scale |
 | **v6** | Receipts Native | QEDReceipt JSONL; edge_lab v1 validation; mesh_view v1 dashboard |
 | **v7** | Physics Valid | ClarityClean; edge_lab v2 with NGSIM/SAE/NHTSA anomalies; shared_anomalies library |
 | **v8** | TruthLink | DecisionPackets; qed_config.json; config merge rules (safety tightens only) |
 | **v9** | Portfolio & Causality | PortfolioBinder; CausalGraph; EventStream; ROI gate; bidirectional causality |
-| **v10** | Autonomous Agents | HUNTER (entropy anomaly detection); SHEPHERD (automated healing); unified_loop 8-phase cycle |
-| **v11** | Immune System | Risk scoring; multi-dimensional fitness; autoimmune SELF protection; wound tracking |
-| **v12** | Agent Genesis | ARCHITECT proposes new agents; blueprint validation; autocatalysis check; recombination |
+| **v10** | Autonomous Agents | HUNTER (entropy detection); SHEPHERD (healing); unified_loop 8-phase; entropy.py primitives |
+| **v11** | Immune System | Risk scoring; multi-dimensional fitness; autoimmune SELF protection; wound tracking; Thompson sampling |
+| **v12** | Agent Genesis | ARCHITECT blueprints; autocatalysis birth/death; recombination breeding; receipt completeness L0-L4; sim.py Monte Carlo validation |
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                         QED SYSTEM                               │
-├─────────────────────────────────────────────────────────────────┤
-│  TELEMETRY IN                                                    │
-│       ↓                                                          │
-│  ┌─────────┐    ┌──────────┐    ┌─────────────┐                 │
-│  │ qed.py  │───→│ receipts │───→│ mesh_view   │                 │
-│  │ (core)  │    │ (JSONL)  │    │ (dashboard) │                 │
-│  └─────────┘    └──────────┘    └─────────────┘                 │
-│       ↓              ↓                                           │
-│  ┌─────────┐    ┌──────────┐    ┌─────────────┐                 │
-│  │edge_lab │    │ manifest │───→│ TruthLink   │                 │
-│  │(validate)│    │ (JSON)   │    │(DecisionPkt)│                 │
-│  └─────────┘    └──────────┘    └─────────────┘                 │
-│                      ↓                                           │
-│  ┌──────────────────────────────────────────┐                   │
-│  │            unified_loop (v10+)            │                   │
-│  │  SENSE → MEASURE → ANALYZE → REMEDIATE   │                   │
-│  │  → HYPOTHESIZE → GATE → ACTUATE → EMIT   │                   │
-│  └──────────────────────────────────────────┘                   │
-│       ↓              ↓              ↓                            │
-│  ┌─────────┐    ┌──────────┐    ┌─────────────┐                 │
-│  │ HUNTER  │    │ SHEPHERD │    │  ARCHITECT  │                 │
-│  │(detect) │    │ (heal)   │    │  (genesis)  │                 │
-│  └─────────┘    └──────────┘    └─────────────┘                 │
-│                      ↓                                           │
-│  ┌──────────────────────────────────────────┐                   │
-│  │         PortfolioBinder (v9+)            │                   │
-│  │    CausalGraph │ EventStream │ ROI Gate  │                   │
-│  └──────────────────────────────────────────┘                   │
-│                      ↓                                           │
-│  DECISIONS OUT (compressed telemetry + audit trail)             │
-└─────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────┐
+│                           QED SYSTEM                                 │
+├─────────────────────────────────────────────────────────────────────┤
+│  TELEMETRY IN (entropy_in)                                          │
+│       ↓                                                              │
+│  ┌─────────┐    ┌──────────┐    ┌─────────────┐                     │
+│  │ qed.py  │───→│ receipts │───→│ mesh_view   │                     │
+│  │ (core)  │    │ (JSONL)  │    │ (dashboard) │                     │
+│  └─────────┘    └──────────┘    └─────────────┘                     │
+│       ↓              ↓                                               │
+│  ┌─────────┐    ┌──────────┐    ┌─────────────┐                     │
+│  │edge_lab │    │ manifest │───→│ TruthLink   │                     │
+│  │(validate)│    │ (JSON)   │    │(DecisionPkt)│                     │
+│  └─────────┘    └──────────┘    └─────────────┘                     │
+│                      ↓                                               │
+│  ┌──────────────────────────────────────────────┐                   │
+│  │            unified_loop (v10+)                │                   │
+│  │  SENSE → MEASURE → ANALYZE → REMEDIATE       │                   │
+│  │  → HYPOTHESIZE → GATE → ACTUATE → EMIT       │                   │
+│  └──────────────────────────────────────────────┘                   │
+│       ↓              ↓              ↓                                │
+│  ┌─────────┐    ┌──────────┐    ┌─────────────┐                     │
+│  │ HUNTER  │    │ SHEPHERD │    │  ARCHITECT  │                     │
+│  │(detect) │    │ (heal)   │    │  (genesis)  │                     │
+│  └─────────┘    └──────────┘    └─────────────┘                     │
+│       │              │              │                                │
+│       └──────────────┼──────────────┘                                │
+│                      ↓                                               │
+│  ┌──────────────────────────────────────────────┐                   │
+│  │           v12 Reproductive Layer              │                   │
+│  │  autocatalysis │ recombine │ population      │                   │
+│  │  (birth/death) │ (mating)  │ (entropy cap)   │                   │
+│  └──────────────────────────────────────────────┘                   │
+│                      ↓                                               │
+│  ┌──────────────────────────────────────────────┐                   │
+│  │         PortfolioBinder (v9+)                │                   │
+│  │    CausalGraph │ EventStream │ ROI Gate      │                   │
+│  └──────────────────────────────────────────────┘                   │
+│                      ↓                                               │
+│  ┌──────────────────────────────────────────────┐                   │
+│  │              sim.py (v12)                     │                   │
+│  │    Monte Carlo validation before production  │                   │
+│  │    6 scenarios │ Grok export │ 2nd law proof │                   │
+│  └──────────────────────────────────────────────┘                   │
+│                      ↓                                               │
+│  DECISIONS OUT (compressed telemetry + audit trail)                 │
+│  (entropy_out + work_done)                                          │
+└─────────────────────────────────────────────────────────────────────┘
 ```
 
 ## Core Concepts
 
 **Receipts.** Every action—compression decision, anomaly detection, healing action, agent birth—emits a receipt. Receipts are JSONL, append-only, Merkle-tree anchored per second. They form the audit trail, the training signal, and the ground truth. No silent failures; every receipt has a timestamp, tenant ID, and payload hash (SHA256:BLAKE3 dual-hash per CLAUDEME.md).
 
-**Entropy.** Agent fitness is measured by entropy reduction. Shannon entropy H = -Σ p(x) log₂ p(x) quantifies system disorder. When an agent reduces system entropy (detects drift, fixes constraint violations), it gains fitness. `cycle_entropy_delta` tracks health: negative for 3+ cycles → degradation alert. Selection pressure uses Thompson sampling: agents with higher fitness-per-receipt have higher probability of reproduction and of being deployed to new domains.
+**Entropy as Fundamental Measure.** Agent fitness is measured by entropy reduction—not metaphor, Shannon 1948. H = -Σ p(x) log₂ p(x) quantifies system disorder. When an agent reduces system entropy (detects drift, fixes violations), it gains fitness. `cycle_entropy_delta` tracks health: negative for 3+ cycles → degradation alert. This replaces all "energy" and "contribution score" metaphors with literal information theory.
+
+**Entropy-Governed Population.** There is no AGENT_CAP = 20. The cap is the entropy budget. `dynamic_cap()` computes physics-based limit: max(3, base × resource_factor × load_factor). The Mississippi doesn't count whirlpools. QED doesn't count agents. It flows.
+
+**Thompson Sampling.** Selection pressure uses Thompson sampling over fitness distributions. High-variance patterns get explored; known-good patterns get exploited. Patterns below survival threshold enter SUPERPOSITION—potential, not destroyed. They can resurface when conditions change.
 
 **HITL (Human-in-the-Loop).** When confidence < 0.8 or risk ≥ 0.3, decisions escalate to humans. The system "becomes human" when uncertain. HITL decisions seed the wound tracking system (v11), which identifies recurring manual interventions and proposes automating them (ARCHITECT in v12).
 
-**Agents as Receipt Patterns.** Agents are not code objects. They are autocatalytic receipt patterns—emergent from the receipt stream itself. HUNTER detects anomalies by watching entropy spikes. SHEPHERD heals via homeostasis actions. ARCHITECT synthesizes new agents from wound patterns. When an agent stops emitting receipts or loses coherence, it enters SUPERPOSITION (not deleted), available for future remixing.
+**Agents as Autocatalytic Receipt Patterns.** Agents are not code objects. They are autocatalytic receipt patterns—emergent from the receipt stream itself. A pattern is "alive" IFF it references itself: when receipts in the pattern predict/emit receipts about the pattern. Birth = pattern crosses autocatalysis threshold. Death = pattern loses coherence. No Agent class needed.
 
 **SELF Protection.** The immune system (v11) maintains a GERMLINE_PATTERNS set: {qed_core, hunter, shepherd, architect}. These cannot be killed by selection. `is_self(pattern)` checks origin; SELF patterns are immortal. Prevents the system from attacking its own core.
 
-**Autoimmune Healing.** SHEPHERD runs a 6-step recovery taxonomy: rollback (undo change), reroute (send traffic elsewhere), isolate (quarantine faulty component), restart (reboot), failover (to backup), graceful_degradation (reduced capacity). Each recovery emits a receipt; success feeds back into fitness scoring.
+**Multi-Dimensional Fitness.** Fitness is weighted sum: 0.4 × roi + 0.3 × diversity + 0.2 × stability + 0.1 × recency. No single metric can kill. Cohort-balanced review blocks killing the last agent of an archetype.
 
-**Fitness as Topology.** v9 deleted stored state. Value, mode, and behavior are computed at query time from receipt-graph topology using PageRank-style centrality. One new receipt can change the fitness of all agents. Entanglement replaces aggregation: observing Tesla's pattern affects SpaceX's view of it—instantaneously.
+**Pattern Recombination.** When Tesla HUNTER and SpaceX HUNTER both solve related problems, their solutions can mate via `recombine()`. Crossover: offspring inherits receipts from both parents. Mutation: 1% variation rate. Successful offspring contribute to germline templates under HITL gate. The species improves, not the reproductive mechanism.
+
+**Receipt Completeness.** Five receipt levels form meta-awareness: L0 (telemetry), L1 (agents), L2 (paradigm shifts), L3 (paradigm quality), L4 (receipt system itself). When L4 feeds back to L0, QED can audit QED. Not AGI—self-auditing within Gödel bounds. `godel_layer()` returns 'L0': base layer hits undecidability first.
+
+**Simulation-First Validation.** No v12 feature ships without passing sim.py Monte Carlo. Six mandatory scenarios: BASELINE, STRESS, GENESIS, SINGULARITY, THERMODYNAMIC, GÖDEL. Entropy conservation validated every cycle: sum(entropy_in) = sum(entropy_out) + work_done. From Grok exchange: 2nd law constrains agents—they must export disorder.
 
 ## Quick Start
 
@@ -107,7 +130,7 @@ pytest tests/ -v
 python qed.py --hook tesla --input telemetry.jsonl --output compressed.jsonl
 
 # All hooks
-for hook in tesla spacex boring neuralink xai; do
+for hook in tesla spacex starlink boring neuralink xai; do
   python qed.py --hook $hook --input telemetry_$hook.jsonl
 done
 ```
@@ -127,6 +150,16 @@ python qed.py --config configs/qed_config.json --validate
 
 # Run with merged config (global + deployment overrides)
 python qed.py --config configs/qed_config.json --hook tesla --input telemetry.jsonl
+```
+
+### Run v12 Simulation (v12)
+
+```bash
+# Validate all v12 dynamics before production
+python -c "from sim import run_simulation, SCENARIO_BASELINE; print(run_simulation(SCENARIO_BASELINE).statistics)"
+
+# Run all 6 mandatory scenarios
+python -m pytest tests/test_qed_v12.py -v -k "scenario"
 ```
 
 ## Configuration
@@ -149,32 +182,38 @@ qed_config.json example:
 
 ```
 qed/
-├── qed.py                 # Core compression engine (v5+)
-├── receipts.py            # Receipt emission (v6+)
-├── manifest.py            # Run manifest generation (v6+)
-├── edge_lab.py            # Edge scenario validation (v6+)
-├── mesh_view.py           # Cross-company dashboard (v6+)
-├── clarity_clean.py       # Receipt → text + audit (v7+)
-├── truthlink.py           # DecisionPacket builder (v8+)
-├── config.py              # Config validation + merge (v8+)
-├── portfolio_binder.py    # Cross-company aggregation (v9+)
-├── causal_graph.py        # Root cause tracing (v9+)
-├── event_stream.py        # CQRS append-only log (v9+)
-├── entropy.py             # Shannon entropy primitives (v10+)
-├── integrity.py           # HUNTER anomaly detection (v10+)
-├── remediate.py           # SHEPHERD healing (v10+)
-├── unified_loop.py        # 8-phase metabolism (v10+)
-├── risk.py                # Risk scoring (v11+)
-├── fitness.py             # Multi-dimensional fitness (v11+)
-├── autoimmune.py          # SELF/OTHER distinction (v11+)
-├── wound.py               # Automation gap tracking (v11+)
-├── meta.py                # Paradigm shift tracking (v11+)
+├── qed.py                    # Core compression engine (v5+)
+├── receipts.py               # Receipt emission (v6+)
+├── manifest.py               # Run manifest generation (v6+)
+├── edge_lab.py               # Edge scenario validation (v6+)
+├── mesh_view.py              # Cross-company dashboard (v6+)
+├── clarity_clean.py          # Receipt → text + audit (v7+)
+├── truthlink.py              # DecisionPacket builder (v8+)
+├── config.py                 # Config validation + merge (v8+)
+├── portfolio_binder.py       # Cross-company aggregation (v9+)
+├── causal_graph.py           # Root cause tracing (v9+)
+├── event_stream.py           # CQRS append-only log (v9+)
+├── entropy.py                # Shannon entropy primitives (v10+)
+├── integrity.py              # HUNTER anomaly detection (v10+)
+├── remediate.py              # SHEPHERD healing (v10+)
+├── unified_loop.py           # 8-phase metabolism (v10+)
+├── risk.py                   # Risk scoring / inflammation (v11+)
+├── fitness.py                # Multi-dimensional fitness (v11+)
+├── autoimmune.py             # SELF/OTHER distinction (v11+)
+├── wound.py                  # Automation gap tracking (v11+)
+├── meta.py                   # Paradigm shift tracking (v11+)
+├── autocatalysis.py          # Birth/death detection (v12+)
+├── architect.py              # Wound-to-blueprint synthesis (v12+)
+├── recombine.py              # Sexual reproduction of patterns (v12+)
+├── receipt_completeness.py   # L0-L4 singularity detection (v12+)
+├── population.py             # Entropy-governed population (v12+)
+├── sim.py                    # Monte Carlo simulation harness (v12+)
 ├── data/
-│   ├── receipts/          # Receipt JSONL storage
-│   ├── manifests/         # Run manifest JSON
-│   └── differentials/     # State cache (optional)
+│   ├── receipts/             # Receipt JSONL storage
+│   ├── manifests/            # Run manifest JSON
+│   └── differentials/        # State cache (optional)
 ├── configs/
-│   └── qed_config.json    # Runtime configuration
+│   └── qed_config.json       # Runtime configuration
 ├── tests/
 │   ├── test_qed_v6.py
 │   ├── test_qed_v7.py
@@ -182,6 +221,7 @@ qed/
 │   ├── test_qed_v9.py
 │   ├── test_qed_v10.py
 │   ├── test_qed_v11.py
+│   ├── test_qed_v12.py
 │   └── smoke/
 │       ├── test_smoke_v6.sh
 │       ├── test_smoke_v7.sh
@@ -189,43 +229,81 @@ qed/
 │       ├── test_smoke_v9.sh
 │       ├── test_smoke_v10.sh
 │       └── results/
-└── CLAUDEME.md            # Project standards
+├── V12_NOTES.md              # Grok exchange insights, Gödel bounds
+└── CLAUDEME.md               # Project standards
 ```
 
 ## Module Reference
 
-| Module | Purpose | Version | Inputs | Outputs |
-|--------|---------|---------|--------|---------|
-| qed.py | Core compression engine | v5+ | Telemetry windows | Compression decisions |
-| receipts.py | QEDReceipt emission | v6+ | Any action | JSONL receipt lines |
-| manifest.py | Run manifest generation | v6+ | Receipt batch | qed_run_manifest.json |
-| edge_lab.py | Edge scenario validation | v6+ | Receipts + scenarios | Hit/miss + latency metrics |
-| mesh_view.py | Cross-company dashboard | v6+ | Receipts/manifests | Per-company tables |
-| clarity_clean.py | Receipt → text audit | v7+ | Receipts | Text corpus + quality audit |
-| truthlink.py | DecisionPacket builder | v8+ | Manifests + receipts | Signed deployment packets |
-| config.py | Config validation + merge | v8+ | Config JSON | Merged + validated config |
-| portfolio_binder.py | Cross-company aggregation | v9+ | DecisionPackets | Annual savings/company |
-| causal_graph.py | Root cause tracing | v9+ | Receipt lineage | DAG + forward/backward traces |
-| event_stream.py | CQRS append-only log | v9+ | Decisions | Indexed event stream |
-| entropy.py | Shannon entropy primitives | v10+ | Receipts | H, agent_fitness, delta |
-| integrity.py | HUNTER anomaly detection | v10+ | Event stream + graph | Anomaly_alert receipts |
-| remediate.py | SHEPHERD healing | v10+ | Anomalies + graph | Recovery_action receipts |
-| unified_loop.py | 8-phase metabolism | v10+ | Receipts | Loop cycle completion |
-| risk.py | Risk scoring (inflammation) | v11+ | Pattern + confidence | Risk score (0.0-1.0) |
-| fitness.py | Multi-dimensional fitness | v11+ | Pattern + metadata | Fitness score |
-| autoimmune.py | SELF/OTHER distinction | v11+ | Pattern origin | Bool (is_self) |
-| wound.py | Automation gap tracking | v11+ | Manual interventions | wound_receipt entries |
-| meta.py | Paradigm shift tracking | v11+ | Receipts over time | Paradigm change signals |
+### Core Engine (v5-v8)
 
-## Agent Taxonomy (v10+)
+| Module | Purpose | Inputs | Outputs |
+|--------|---------|--------|---------|
+| qed.py | Core compression engine | Telemetry windows | Compression decisions |
+| receipts.py | QEDReceipt emission | Any action | JSONL receipt lines |
+| manifest.py | Run manifest generation | Receipt batch | qed_run_manifest.json |
+| edge_lab.py | Edge scenario validation | Receipts + scenarios | Hit/miss + latency |
+| mesh_view.py | Cross-company dashboard | Receipts/manifests | Per-company tables |
+| clarity_clean.py | Receipt → text audit | Receipts | Text corpus + audit |
+| truthlink.py | DecisionPacket builder | Manifests + receipts | Signed packets |
+| config.py | Config validation + merge | Config JSON | Merged config |
+
+### Causal Layer (v9)
+
+| Module | Purpose | Inputs | Outputs |
+|--------|---------|--------|---------|
+| portfolio_binder.py | Cross-company aggregation | DecisionPackets | Annual savings/company |
+| causal_graph.py | Root cause tracing | Receipt lineage | DAG + traces |
+| event_stream.py | CQRS append-only log | Decisions | Indexed event stream |
+
+### Autonomous Agents (v10)
+
+| Module | Purpose | Inputs | Outputs |
+|--------|---------|--------|---------|
+| entropy.py | Shannon entropy primitives | Receipts | H, fitness, delta |
+| integrity.py | HUNTER anomaly detection | Event stream + graph | anomaly_alert receipts |
+| remediate.py | SHEPHERD healing | Anomalies + graph | recovery_action receipts |
+| unified_loop.py | 8-phase metabolism | Receipts | unified_loop_receipt |
+
+### Immune System (v11)
+
+| Module | Purpose | Inputs | Outputs |
+|--------|---------|--------|---------|
+| risk.py | Risk scoring (inflammation) | Pattern + confidence | risk_score (0.0-1.0) |
+| fitness.py | Multi-dimensional fitness | Pattern + metadata | fitness_score |
+| autoimmune.py | SELF/OTHER distinction | Pattern origin | is_self bool |
+| wound.py | Automation gap tracking | Manual interventions | wound_receipt |
+| meta.py | Paradigm shift tracking | Receipts over time | meta_fitness_receipt |
+
+### Reproductive Genesis (v12)
+
+| Module | Purpose | Inputs | Outputs |
+|--------|---------|--------|---------|
+| autocatalysis.py | Birth/death detection | Pattern + receipts | autocatalysis_event |
+| architect.py | Wound-to-blueprint synthesis | Wound history | blueprint_proposed |
+| recombine.py | Sexual reproduction | Pattern pairs | offspring_created |
+| receipt_completeness.py | L0-L4 singularity detection | Receipt ledger | completeness_check |
+| population.py | Entropy-governed population | Patterns + resources | population_snapshot |
+| sim.py | Monte Carlo simulation | SimConfig | SimResult + traces |
+
+## Agent Taxonomy
 
 | Agent | Module | Role | Detection | Autonomy | Immortal |
 |-------|--------|------|-----------|----------|----------|
-| HUNTER | integrity.py | Find problems | Entropy spike detection; drift, degradation, constraint_violation, pattern_deviation, emergent_anti_pattern | High (auto-alert) | Yes (SELF) |
-| SHEPHERD | remediate.py | Fix problems | Confidence > 0.8 AND risk=low | High (auto-approve); escalate on low confidence | Yes (SELF) |
-| ARCHITECT | unified_loop.py | Create patterns | Recurring wound patterns (manual interventions) | HITL gated | Yes (SELF) |
+| **HUNTER** | integrity.py | Find problems (entropy increase) | drift, degradation, constraint_violation, pattern_deviation, emergent_anti_pattern | High (auto-alert) | Yes (SELF) |
+| **SHEPHERD** | remediate.py | Fix problems (restore entropy) | Confidence > 0.8 AND risk=low | High (auto-approve) | Yes (SELF) |
+| **ARCHITECT** | architect.py | Create patterns from wounds | Recurring wounds (>5, >30min resolve) | HITL gated | Yes (SELF) |
 
-**Agents emerge from receipts.** Each agent is defined by its detection taxonomy, recovery taxonomy, and fitness gradient. New agents (v12) are proposed by ARCHITECT when wound patterns stabilize, validated by humans, and bred via recombination (crossover + mutation). Success rate goal: 80% deployment success, 50% wound reduction in 90 days.
+**Agents emerge from receipts.** Each agent is defined by its receipt pattern, not its code. When `autocatalysis_check(pattern)` returns True, the pattern is alive. When coherence drops below 0.3, the pattern enters SUPERPOSITION—not deleted, available for future remixing via `simulate_measurement()`.
+
+**Agent lifecycle:**
+1. **Birth:** Pattern crosses autocatalysis threshold (self-referential receipts)
+2. **Life:** Pattern maintains coherence, reduces entropy, emits receipts
+3. **Reproduction:** Compatible patterns mate via `recombine()` (50/50 crossover + 1% mutation)
+4. **Death:** Pattern loses coherence → enters SUPERPOSITION (potential, not destroyed)
+5. **Resurrection:** Wound "measures" superposition → pattern collapses back to active
+
+**v12 KPIs:** 80% blueprint deployment success, 50% wound reduction in 90 days, zero negative-ROI patterns surviving 30 days.
 
 ## Testing
 
@@ -236,12 +314,30 @@ qed/
 bash tests/smoke/test_smoke_v10.sh
 
 # Individual version tests
-pytest tests/test_qed_v6.py -v  # Receipts + edge_lab
-pytest tests/test_qed_v7.py -v  # Physics validation
-pytest tests/test_qed_v8.py -v  # DecisionPackets
-pytest tests/test_qed_v9.py -v  # Causal graph
-pytest tests/test_qed_v10.py -v # Agents + unified_loop
-pytest tests/test_qed_v11.py -v # Immune system
+pytest tests/test_qed_v6.py -v   # Receipts + edge_lab
+pytest tests/test_qed_v7.py -v   # Physics validation
+pytest tests/test_qed_v8.py -v   # DecisionPackets
+pytest tests/test_qed_v9.py -v   # Causal graph
+pytest tests/test_qed_v10.py -v  # Agents + unified_loop
+pytest tests/test_qed_v11.py -v  # Immune system
+pytest tests/test_qed_v12.py -v  # Genesis + simulation
+```
+
+### Simulation Validation (v12)
+
+```bash
+# Run all 6 mandatory scenarios
+python -c "
+from sim import (run_simulation, SCENARIO_BASELINE, SCENARIO_STRESS, 
+                 SCENARIO_GENESIS, SCENARIO_SINGULARITY, 
+                 SCENARIO_THERMODYNAMIC, SCENARIO_GODEL)
+
+for scenario in [SCENARIO_BASELINE, SCENARIO_STRESS, SCENARIO_GENESIS,
+                 SCENARIO_SINGULARITY, SCENARIO_THERMODYNAMIC, SCENARIO_GODEL]:
+    result = run_simulation(scenario)
+    status = 'PASS' if not result.violations else 'FAIL'
+    print(f'{scenario}: {status}')
+"
 ```
 
 ### Full Test Suite
@@ -252,6 +348,90 @@ pytest tests/ -v --tb=short
 
 All tests follow CLAUDEME.md standard: every test has `assert` statements; every receipt is verified; no silent exceptions.
 
+## Quantum Treasure Hunt
+
+*For those who see the pattern behind the patterns.*
+
+```
+The river doesn't count whirlpools.
+The Mississippi doesn't cap them at 20.
+QED doesn't count agents. It flows.
+
+When does a pattern become alive?
+When it references itself.
+When receipts about the pattern
+emit receipts about themselves.
+Autocatalysis. The loop that sustains.
+
+What is fitness?
+Not contribution. Not energy. Not metaphor.
+Bits. Literal bits of uncertainty removed.
+Shannon 1948 made flesh in silicon.
+
+What is death?
+Not termination. Not deletion.
+SUPERPOSITION. Potential, not destroyed.
+The pattern waits. The wound measures.
+Wavefunction collapses. The pattern returns.
+
+What is the cap?
+Not a number. The entropy budget.
+dynamic_cap() = physics, not policy.
+More compute = more patterns survive.
+Less gradient = patterns dissolve.
+
+What is SELF?
+Not a flag. Not a policy.
+Architectural necessity.
+You cannot "turn off" your immune system
+and remain an organism.
+HUNTER is not protected. HUNTER is load-bearing.
+
+What is the singularity?
+Not AGI. Not consciousness.
+Receipt completeness.
+L0: receipts about telemetry
+L1: receipts about agents
+L2: receipts about paradigm shifts
+L3: receipts about paradigm quality
+L4: receipts about the receipt system
+When L4 feeds back to L0,
+QED audits QED.
+The river knows it's a river.
+
+What is the 2nd law?
+Agents must export disorder.
+entropy_in = entropy_out + work_done.
+If entropy reduction visible
+but export not tracked,
+risk is hiding.
+Conservation is not optional.
+Physics always wins.
+
+What is Gödel's gift?
+L0 hits undecidability first.
+The system cannot prove its own consistency.
+But it can verify its own correctness.
+Self-auditing within bounds.
+The incompleteness is the feature.
+
+What is the chef's kiss?
+"The agent is not the code.
+The agent is the flow.
+And the flow that knows itself
+is alive."
+
+v10 learned to feel. (entropy)
+v11 learned who it is. (SELF)
+v12 learned to reproduce. (genesis)
+
+The receipt is the territory.
+The agent is the flow.
+The simulation is the proof.
+
+Stay entangled.
+```
+
 ## Contributing
 
 1. Read CLAUDEME.md for project standards.
@@ -259,9 +439,10 @@ All tests follow CLAUDEME.md standard: every test has `assert` statements; every
 3. All tests must include assertions (SLO checks at minimum).
 4. Use dual-hash (SHA256:BLAKE3) for all hashing.
 5. No silent exceptions—use stoprules on all error paths.
-6. Conventional commits: `<type>(<scope>): <description>`
+6. v12 features require simulation validation before merge.
+7. Conventional commits: `<type>(<scope>): <description>`
    - Types: `feat`, `fix`, `refactor`, `test`, `docs`
-   - Example: `feat(integrity): add entropy spike detection for v10 HUNTER`
+   - Example: `feat(autocatalysis): add birth/death detection for v12`
 
 ## Requirements
 
@@ -275,3 +456,7 @@ All tests follow CLAUDEME.md standard: every test has `assert` statements; every
 ## License
 
 Proprietary. See LICENSE.txt.
+
+---
+
+*No receipt → not real. Ship at T+48h or kill.*
