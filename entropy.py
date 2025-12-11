@@ -26,6 +26,7 @@ from receipts import dual_hash, emit_receipt, StopRule
 # =============================================================================
 
 SURVIVAL_THRESHOLD = 0.0  # Patterns must have positive expected fitness
+PLANCK_ENTROPY = 0.001  # Minimum entropy of existence (matches sim.py)
 
 # Module exports for receipt types
 RECEIPT_SCHEMA = ["entropy_measurement", "fitness_score", "selection_event"]
@@ -43,27 +44,26 @@ def system_entropy(receipts: List[dict]) -> float:
         receipts: List of receipt dicts with 'receipt_type' field
 
     Returns:
-        float: Shannon entropy in bits
+        float: Shannon entropy in bits, never returns 0 (minimum PLANCK_ENTROPY)
 
     Edge cases:
-        - Empty list -> 0.0 (no uncertainty)
-        - Single receipt type -> log2(len(receipts) + 1) (information content)
-        - N types uniformly distributed -> log2(N) bits
+        - Empty list -> PLANCK_ENTROPY (existence has minimum entropy)
+        - Single receipt type -> PLANCK_ENTROPY (mathematical entropy = 0, but floor applied)
+        - N types uniformly distributed -> max(Shannon entropy, PLANCK_ENTROPY)
 
-    Note: For entropy accounting purposes, single receipts have information
-    content even though they have no uncertainty. This prevents division-by-zero
-    in conservation checks when wounds occur.
+    Note: PLANCK_ENTROPY floor ensures existence has information content.
+    This prevents division-by-zero in conservation checks and enforces that
+    structure = entropy (information theory).
     """
     if not receipts:
-        return 0.0
+        return PLANCK_ENTROPY
 
     # Count receipt types
     type_counts = Counter(r.get("receipt_type", "unknown") for r in receipts)
 
-    # Edge case: single receipt or single type has information content
-    # Use log2(N+1) as minimum bound for accounting
+    # Edge case: single receipt type has mathematical entropy = 0, but apply floor
     if len(type_counts) <= 1:
-        return math.log2(len(receipts) + 1)
+        return PLANCK_ENTROPY
 
     total = sum(type_counts.values())
     entropy = 0.0
@@ -73,7 +73,8 @@ def system_entropy(receipts: List[dict]) -> float:
             p = count / total
             entropy -= p * math.log2(p)
 
-    return entropy
+    # Apply floor to ensure minimum entropy
+    return max(entropy, PLANCK_ENTROPY)
 
 
 # =============================================================================

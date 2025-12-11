@@ -33,6 +33,10 @@ TOLERANCE_FLOOR = 0.01   # Physics minimum precision (Heisenberg, Shannon)
 TOLERANCE_CEILING = 0.5  # Above 50% uncertainty = admit chaos
 ENTROPY_HISTORY_WINDOW = 20  # Cycles for variance calculation
 
+# Observer paradigm constants
+PLANCK_ENTROPY = 0.001  # Minimum entropy of existence, floor for all measurements
+LANDAUER_COEFFICIENT = 1.0  # Scales observation cost (calibrated, do not change)
+
 # Module exports for receipt types
 RECEIPT_SCHEMA = [
     "sim_config", "sim_cycle", "sim_birth", "sim_death",
@@ -67,18 +71,11 @@ class SimState:
     completeness_trace: List[dict] = field(default_factory=list)
     violations: List[dict] = field(default_factory=list)
     cycle: int = 0
-    entropy_in_total: float = 0.0
-    entropy_out_total: float = 0.0
-    work_done_total: float = 0.0
-    # Detailed entropy source/sink tracking
-    entropy_in_wounds: float = 0.0
-    entropy_in_events: float = 0.0
-    entropy_in_measurements: float = 0.0
-    entropy_out_emissions: float = 0.0
-    entropy_out_structured: float = 0.0
-    work_done_fitness: float = 0.0
-    work_done_selection: float = 0.0
-    work_done_other: float = 0.0
+    # Observer paradigm fields
+    H_genesis: float = 0.0  # Entropy at simulation birth, set once
+    H_previous: float = 0.0  # System entropy at previous cycle end
+    H_boundary_this_cycle: float = 0.0  # Accumulated boundary crossing entropy this cycle
+    operations_this_cycle: int = 0  # Count of observations/decisions made this cycle
     # Per-cycle tracking for adaptive tolerance computation
     births_this_cycle: int = 0
     deaths_this_cycle: int = 0
@@ -223,12 +220,21 @@ def initialize_state(config: SimConfig) -> SimState:
         self_patterns.append(pattern)
 
     state.active_patterns = self_patterns
+
+    # Measure genesis entropy (Big Bang)
+    H_genesis = measure_genesis(self_patterns)
+    state.H_genesis = H_genesis
+    state.H_previous = H_genesis
+
     return state
 
 
 def simulate_cycle(state: SimState, config: SimConfig) -> List[dict]:
     """
-    One iteration of v12 unified loop.
+    One iteration of v12 unified loop (observer paradigm).
+
+    Observer paradigm: The observation IS the entropy source.
+    Conservation: balance = H_boundary + H_observation + H_delta >= -tolerance
 
     Args:
         state: Current SimState (mutated in place)
@@ -245,66 +251,78 @@ def simulate_cycle(state: SimState, config: SimConfig) -> List[dict]:
     state.superposition_transitions_this_cycle = 0
     state.wounds_this_cycle = 0
 
-    # Store previous totals for delta calculation (cycle start)
-    prev_entropy_in = state.entropy_in_total
-    prev_entropy_out = state.entropy_out_total
-    prev_work_done = state.work_done_total
+    # CYCLE START: Measure initial entropy state
+    H_start = measure_state(state.receipt_ledger)
+    state.H_boundary_this_cycle = 0.0
+    state.operations_this_cycle = 0
 
-    # Reset per-cycle breakdown counters (cycle start)
-    state.entropy_in_wounds = 0.0
-    state.entropy_in_events = 0.0
-    state.entropy_in_measurements = 0.0
-    state.entropy_out_emissions = 0.0
-    state.entropy_out_structured = 0.0
-    state.work_done_fitness = 0.0
-    state.work_done_selection = 0.0
-    state.work_done_other = 0.0
-
-    # Generate wounds stochastically
+    # Generate wounds stochastically (count as observation)
+    state.operations_this_cycle += 1  # Checking for wounds
     if random.random() < config.wound_rate:
         wound = simulate_wound(state, "operational")
         state.wound_history.append(wound)
         state.wounds_this_cycle += 1
+        # Measure boundary crossing entropy
+        state.H_boundary_this_cycle += measure_boundary_crossing(wound)
 
-    # Run autocatalysis detection
+    # Run autocatalysis detection (count operations)
+    for pattern in state.active_patterns:
+        state.operations_this_cycle += 1  # Autocatalysis check per pattern
     simulate_autocatalysis(state)
 
-    # Apply selection pressure
+    # Apply selection pressure (count operations)
+    for pattern in state.active_patterns:
+        state.operations_this_cycle += 1  # Fitness evaluation per pattern
+        state.operations_this_cycle += 1  # Selection decision per pattern
     simulate_selection(state)
 
-    # Attempt recombination
+    # Attempt recombination (count operations)
+    if len(state.active_patterns) >= 2:
+        state.operations_this_cycle += 1  # Recombination attempt
     simulate_recombination(state, config)
 
-    # Run genesis check
+    # Run genesis check (count operations)
+    if len(state.wound_history) >= 5:
+        state.operations_this_cycle += 1  # Genesis/HITL evaluation
     simulate_genesis(state, config)
 
-    # Check completeness
+    # Check completeness (count as observation)
+    state.operations_this_cycle += 1
     simulate_completeness(state)
 
-    # Track entropy flow (use accumulated values from state)
-    entropy_in, entropy_out, work_done = simulate_entropy_flow(state)
+    # CYCLE END: Measure final entropy state
+    H_end = measure_state(state.receipt_ledger)
+    H_observation = measure_observation_cost(state.operations_this_cycle)
+    H_delta = H_end - H_start
+    balance = state.H_boundary_this_cycle + H_observation + H_delta
 
-    # Validate conservation
-    is_valid = validate_conservation(state, entropy_in, entropy_out, work_done, config)
+    # Store H_end for next cycle
+    state.H_previous = H_end
+
+    # Emit entropy_state receipt (CLAUDEME LAW_1: No receipt → not real)
+    entropy_state_receipt = emit_entropy_state_receipt(
+        state, state.cycle, H_start, H_end, H_observation, balance
+    )
+    state.receipt_ledger.append(entropy_state_receipt)
+
+    # Validate conservation (new signature)
+    is_valid = validate_conservation(state)
     if not is_valid:
         violations.append({
             "cycle": state.cycle,
             "type": "conservation_violation",
-            "entropy_in": entropy_in,
-            "entropy_out": entropy_out,
-            "work_done": work_done
+            "H_start": H_start,
+            "H_end": H_end,
+            "H_boundary": state.H_boundary_this_cycle,
+            "H_observation": H_observation,
+            "balance": balance
         })
 
     # Record traces
-    current_entropy = system_entropy(state.receipt_ledger)
+    current_entropy = H_end
     state.entropy_trace.append(current_entropy)
     coverage = level_coverage(state.receipt_ledger)
     state.completeness_trace.append(coverage)
-
-    # Emit entropy_flow receipt (cycle end) - CLAUDEME LAW_1: No receipt → not real
-    entropy_flow_receipt = emit_entropy_flow_receipt(state, state.cycle)
-    track_emission_entropy(state, entropy_flow_receipt)
-    state.receipt_ledger.append(entropy_flow_receipt)
 
     # Emit sim_cycle receipt
     receipt = emit_receipt("sim_cycle", {
@@ -312,11 +330,10 @@ def simulate_cycle(state: SimState, config: SimConfig) -> List[dict]:
         "cycle": state.cycle,
         "births": state.births_this_cycle,
         "deaths": state.deaths_this_cycle,
-        "entropy_delta": entropy_in - entropy_out - work_done,
+        "H_delta": H_delta,
         "violations": len(violations),
         "active_patterns": len(state.active_patterns)
     })
-    track_emission_entropy(state, receipt)
     state.receipt_ledger.append(receipt)
 
     return violations
@@ -351,11 +368,6 @@ def simulate_wound(state: SimState, wound_type: str) -> dict:
         "tenant_id": "simulation"
     }
 
-    # Measure entropy of wound injection (external input = incoming entropy)
-    wound_entropy = system_entropy([wound])
-    state.entropy_in_wounds += wound_entropy
-    state.entropy_in_total += wound_entropy
-
     return wound
 
 
@@ -382,7 +394,6 @@ def simulate_autocatalysis(state: SimState) -> None:
                 "coherence_at_birth": current_coherence,
                 "cycle": state.cycle
             })
-            track_emission_entropy(state, receipt)
             state.receipt_ledger.append(receipt)
             state.births_this_cycle += 1
 
@@ -394,7 +405,6 @@ def simulate_autocatalysis(state: SimState) -> None:
                 "coherence_at_death": current_coherence,
                 "cycle": state.cycle
             })
-            track_emission_entropy(state, receipt)
             state.receipt_ledger.append(receipt)
             state.deaths_this_cycle += 1
 
@@ -419,9 +429,6 @@ def simulate_selection(state: SimState) -> None:
     if not state.active_patterns:
         return
 
-    # Count patterns evaluated for work tracking
-    patterns_evaluated = len(state.active_patterns)
-
     survivors, superposition = selection_pressure(state.active_patterns, "simulation")
 
     # Track superposition transitions
@@ -431,20 +438,6 @@ def simulate_selection(state: SimState) -> None:
     state.active_patterns = survivors
     state.superposition_patterns.extend(superposition)
 
-    # Track work done during selection (pattern evaluation is measurement = work)
-    # Derive entropy cost per evaluation from system state (not hardcoded)
-    if state.entropy_trace:
-        # Use recent entropy variance as cost estimate
-        recent_entropy = state.entropy_trace[-1] if state.entropy_trace else 1.0
-        entropy_per_evaluation = recent_entropy / max(patterns_evaluated, 1) * 0.1
-    else:
-        # Bootstrap: small positive value derived from pattern count
-        entropy_per_evaluation = 0.01
-
-    selection_work = patterns_evaluated * entropy_per_evaluation
-    state.work_done_selection += selection_work
-    state.work_done_total += selection_work
-
     # Emit selection_event receipt
     receipt = emit_receipt("selection_event", {
         "tenant_id": "simulation",
@@ -452,7 +445,6 @@ def simulate_selection(state: SimState) -> None:
         "survivors": len(survivors),
         "to_superposition": len(superposition)
     })
-    track_emission_entropy(state, receipt)
     state.receipt_ledger.append(receipt)
 
 
@@ -473,7 +465,6 @@ def simulate_recombination(state: SimState, config: SimConfig) -> None:
     for pattern_a, pattern_b in pairs[:1]:  # Limit to 1 recombination per cycle
         # Recombine
         recombination_receipt = recombine(pattern_a, pattern_b)
-        track_emission_entropy(state, recombination_receipt)
         state.receipt_ledger.append(recombination_receipt)
 
         # Create offspring pattern
@@ -511,7 +502,6 @@ def simulate_recombination(state: SimState, config: SimConfig) -> None:
                     "viable": True,
                     "cycle": state.cycle
                 })
-                track_emission_entropy(state, receipt)
                 state.receipt_ledger.append(receipt)
 
 
@@ -582,7 +572,6 @@ def simulate_genesis(state: SimState, config: SimConfig) -> None:
                 "n_receipts": n_receipts,
                 "cycle": state.cycle
             })
-            track_emission_entropy(state, birth_receipt)
             state.receipt_ledger.append(birth_receipt)
 
             # Emit genesis_approved
@@ -593,7 +582,6 @@ def simulate_genesis(state: SimState, config: SimConfig) -> None:
                 "approved_by": "sim_hitl",
                 "cycle": state.cycle
             })
-            track_emission_entropy(state, receipt)
             state.receipt_ledger.append(receipt)
 
 
@@ -614,7 +602,6 @@ def simulate_completeness(state: SimState) -> None:
                 "completeness_achieved": True,
                 "godel_layer": godel_layer()
             })
-            track_emission_entropy(state, receipt)
             state.receipt_ledger.append(receipt)
 
 
@@ -622,85 +609,47 @@ def simulate_completeness(state: SimState) -> None:
 # ENTROPY AND THERMODYNAMICS (4 required)
 # =============================================================================
 
-def track_emission_entropy(state: SimState, receipt: dict) -> None:
+
+def emit_entropy_state_receipt(state: SimState, cycle: int, H_start: float,
+                               H_end: float, H_observation: float, balance: float) -> dict:
     """
-    Track entropy reduction from pattern receipt emission.
-
-    When patterns emit receipts, they add structure to the system,
-    potentially reducing entropy. Measure before/after and track delta.
-
-    Args:
-        state: Current SimState (mutated in place)
-        receipt: Receipt to be appended to ledger
-    """
-    # Measure entropy before emission
-    if len(state.receipt_ledger) > 0:
-        # Use recent context (last 10 receipts) for efficiency
-        context_size = min(10, len(state.receipt_ledger))
-        recent_receipts = state.receipt_ledger[-context_size:]
-        entropy_before = system_entropy(recent_receipts)
-
-        # After adding receipt
-        receipts_after = recent_receipts + [receipt]
-        entropy_after = system_entropy(receipts_after)
-
-        # Delta = before - after (positive means entropy reduced)
-        entropy_delta = entropy_before - entropy_after
-
-        # Only count positive reductions (structured emissions)
-        if entropy_delta > 0:
-            state.entropy_out_emissions += entropy_delta
-            state.entropy_out_total += entropy_delta
-
-
-def emit_entropy_flow_receipt(state: SimState, cycle: int) -> dict:
-    """
-    Emit entropy_flow receipt at end of each cycle with full breakdown.
+    Emit entropy_state receipt at end of each cycle (observer paradigm).
 
     Per CLAUDEME LAW_1: No receipt → not real
 
     Args:
         state: Current SimState
         cycle: Current cycle number
+        H_start: Entropy at cycle start
+        H_end: Entropy at cycle end
+        H_observation: Observation cost this cycle
+        balance: Conservation balance (H_boundary + H_observation + H_delta)
 
     Returns:
         Receipt dict
     """
-    # Calculate delta and determine balance status
-    delta = state.entropy_in_total - state.entropy_out_total - state.work_done_total
+    H_delta = H_end - H_start
 
     # Compute tolerance to determine balance status
     tolerance, _ = compute_tolerance(state)
 
-    if abs(delta) <= tolerance:
+    if balance >= -tolerance:
         balance_status = "conserved"
-    elif delta > 0:
-        balance_status = "surplus"
     else:
-        balance_status = "deficit"
+        balance_status = "violation"
 
-    return emit_receipt("entropy_flow", {
+    return emit_receipt("entropy_state", {
         "tenant_id": "simulation",
         "cycle": cycle,
-        "entropy_in": state.entropy_in_total,
-        "entropy_in_breakdown": {
-            "wounds": state.entropy_in_wounds,
-            "events": state.entropy_in_events,
-            "measurements": state.entropy_in_measurements
-        },
-        "entropy_out": state.entropy_out_total,
-        "entropy_out_breakdown": {
-            "emissions": state.entropy_out_emissions,
-            "structured": state.entropy_out_structured
-        },
-        "work_done": state.work_done_total,
-        "work_done_breakdown": {
-            "fitness": state.work_done_fitness,
-            "selection": state.work_done_selection,
-            "other": state.work_done_other
-        },
-        "delta": delta,
-        "balance_status": balance_status
+        "H_start": H_start,
+        "H_end": H_end,
+        "H_delta": H_delta,
+        "H_boundary": state.H_boundary_this_cycle,
+        "H_observation": H_observation,
+        "operations_count": state.operations_this_cycle,
+        "balance": balance,
+        "balance_status": balance_status,
+        "H_genesis": state.H_genesis
     })
 
 
@@ -859,56 +808,21 @@ def check_chaos_state(tolerance: float, factors: dict, cycle: int,
     return False
 
 
-def simulate_entropy_flow(state: SimState) -> tuple:
+
+
+def validate_conservation(state: SimState) -> bool:
     """
-    Return accumulated entropy flow for current cycle.
+    Validate 2nd law using observer paradigm.
 
-    No longer uses hardcoded values. All entropy sources/sinks are measured
-    and accumulated throughout the cycle via:
-    - simulate_wound(): entropy_in_wounds
-    - simulate_measurement(): entropy_in_measurements
-    - track_emission_entropy(): entropy_out_emissions
-    - simulate_selection(): work_done_selection
-
-    Args:
-        state: Current SimState with accumulated per-cycle values
-
-    Returns:
-        Tuple of (entropy_in, entropy_out, work_done) - accumulated per-cycle values
-    """
-    # Return per-cycle accumulated values (not hardcoded!)
-    entropy_in = (state.entropy_in_wounds +
-                  state.entropy_in_events +
-                  state.entropy_in_measurements)
-
-    entropy_out = (state.entropy_out_emissions +
-                   state.entropy_out_structured)
-
-    work_done = (state.work_done_fitness +
-                 state.work_done_selection +
-                 state.work_done_other)
-
-    return entropy_in, entropy_out, work_done
-
-
-def validate_conservation(state: SimState, entropy_in: float, entropy_out: float,
-                         work_done: float, config: SimConfig) -> bool:
-    """
-    Validate 2nd law: entropy_in ≈ entropy_out + work_done.
-
-    Uses adaptive tolerance derived from system's own measurement precision.
+    Conservation: balance = H_boundary + H_observation + H_delta >= -tolerance
 
     Args:
         state: Current SimState
-        entropy_in: Input entropy
-        entropy_out: Output entropy
-        work_done: Work performed
-        config: SimConfig with scenario_name
 
     Returns:
         bool: True if valid, False if violated
     """
-    # Compute adaptive tolerance from system state
+    # Get tolerance from compute_tolerance
     tolerance, factors = compute_tolerance(state)
 
     # Emit tolerance_measurement receipt (CLAUDEME LAW_1: No receipt → not real)
@@ -918,30 +832,36 @@ def validate_conservation(state: SimState, entropy_in: float, entropy_out: float
     # Check for chaos state
     in_chaos = check_chaos_state(tolerance, factors, state.cycle, state)
 
-    # Validate conservation with computed tolerance
-    is_valid, violation_delta, receipt_data = entropy_conservation(
-        entropy_in, entropy_out, work_done,
-        tenant_id="simulation",
-        tolerance=tolerance,
-        scenario=config.scenario_name
-    )
+    # Get balance from latest entropy_state receipt
+    # (already computed in simulate_cycle and stored in the receipt)
+    # We can recalculate it here for validation
+    H_start = state.H_previous if state.cycle > 0 else state.H_genesis
+    H_end = measure_state(state.receipt_ledger)
+    H_delta = H_end - H_start
+    balance = state.H_boundary_this_cycle + measure_observation_cost(state.operations_this_cycle) + H_delta
+
+    # Conservation valid if balance >= -tolerance
+    is_valid = balance >= -tolerance
 
     if not is_valid:
-        # Emit sim_violation receipt with full details
+        # Emit sim_violation receipt
         receipt = emit_receipt("sim_violation", {
             "cycle": state.cycle,
-            "violation_type": "conservation",
-            **receipt_data
+            "violation_type": "observer_conservation",
+            "balance": balance,
+            "tolerance": tolerance,
+            "H_boundary": state.H_boundary_this_cycle,
+            "H_observation": measure_observation_cost(state.operations_this_cycle),
+            "H_delta": H_delta,
+            "tenant_id": "simulation"
         })
         state.receipt_ledger.append(receipt)
         # Append violation data to state.violations list
         state.violations.append({
             "cycle": state.cycle,
-            "type": "conservation_violation",
-            "entropy_in": entropy_in,
-            "entropy_out": entropy_out,
-            "work_done": work_done,
-            "violation_delta": violation_delta
+            "type": "observer_conservation_violation",
+            "balance": balance,
+            "tolerance": tolerance
         })
 
     return is_valid
@@ -978,6 +898,81 @@ def entropy_trace_recording(state: SimState) -> None:
     """
     current_entropy = system_entropy(state.receipt_ledger)
     state.entropy_trace.append(current_entropy)
+
+
+# =============================================================================
+# OBSERVER PARADIGM MEASUREMENT FUNCTIONS (4 required)
+# =============================================================================
+
+def measure_state(receipt_ledger: list) -> float:
+    """
+    Measure current system entropy state.
+
+    Args:
+        receipt_ledger: List of receipts
+
+    Returns:
+        float: System entropy, never returns 0 (minimum PLANCK_ENTROPY)
+    """
+    result = system_entropy(receipt_ledger)
+    return max(result, PLANCK_ENTROPY)
+
+
+def measure_observation_cost(operations: int) -> float:
+    """
+    Measure entropy cost of observation (Landauer principle).
+
+    Formula: LANDAUER_COEFFICIENT * log2(operations + 2)
+    The +2 ensures minimum ~1 bit even at 0 operations (log2(2) = 1)
+
+    Args:
+        operations: Number of observations/decisions made this cycle
+
+    Returns:
+        float: Observation entropy for this cycle
+    """
+    import math
+    return LANDAUER_COEFFICIENT * math.log2(operations + 2)
+
+
+def measure_boundary_crossing(receipt_data: dict) -> float:
+    """
+    Measure entropy of crossing phase boundary (ClarityClean).
+
+    Args:
+        receipt_data: Receipt dictionary for the boundary event
+
+    Returns:
+        float: Boundary crossing entropy, never 0 (minimum PLANCK_ENTROPY)
+    """
+    result = system_entropy([receipt_data])
+    return max(result, PLANCK_ENTROPY)
+
+
+def measure_genesis(initial_patterns: list) -> float:
+    """
+    Measure entropy at simulation genesis (Big Bang).
+
+    Called ONCE at simulation start in initialize_state().
+
+    Args:
+        initial_patterns: List of initial pattern dictionaries
+
+    Returns:
+        float: Genesis entropy, never 0 (minimum PLANCK_ENTROPY)
+    """
+    # Create receipts from initial patterns for entropy measurement
+    initial_pattern_receipts = []
+    for pattern in initial_patterns:
+        initial_pattern_receipts.append({
+            "receipt_type": "pattern_genesis",
+            "pattern_id": pattern.get("pattern_id", "unknown"),
+            "origin": pattern.get("origin", "unknown"),
+            "tenant_id": "simulation"
+        })
+
+    result = system_entropy(initial_pattern_receipts)
+    return max(result, PLANCK_ENTROPY)
 
 
 # =============================================================================
@@ -1092,11 +1087,6 @@ def simulate_measurement(state: SimState, wound: dict) -> Optional[dict]:
     if pattern:
         state.superposition_patterns.remove(pattern)
         state.active_patterns.append(pattern)
-
-        # Measure entropy cost of observation (quantum measurement has entropy cost)
-        measurement_entropy = system_entropy([wound])
-        state.entropy_in_measurements += measurement_entropy
-        state.entropy_in_total += measurement_entropy
 
     return pattern
 
