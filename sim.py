@@ -50,10 +50,15 @@ CRITICALITY_ALERT_THRESHOLD = 0.95  # Alert before phase transition
 CRITICALITY_PHASE_TRANSITION = 1.0  # The quantum leap point
 ALERT_COOLDOWN_CYCLES = 50  # Prevent alert spam near threshold
 
+# Orbital decay boost constants
+ORBITAL_DECAY_RATE = 0.0001  # Additive boost per cycle
+BEKENSTEIN_CEILING = 1.05  # Max criticality cap
+
 # Module exports for receipt types
 RECEIPT_SCHEMA = [
     "sim_config", "sim_cycle", "sim_birth", "sim_death",
-    "sim_mate", "sim_complete", "sim_violation", "sim_result"
+    "sim_mate", "sim_complete", "sim_violation", "sim_result",
+    "horizon_crossing"
 ]
 
 # Pattern state enum
@@ -115,6 +120,9 @@ class SimState:
     phase_transition_occurred: bool = False
     observer_wake_count: int = 0
     previous_criticality: float = 0.0
+    # Orbital decay boost fields
+    decay_boost: float = 0.0  # Cumulative additive boost to criticality
+    horizon_crossings: int = 0  # Count of horizon crossings
 
 
 @dataclass(frozen=True)
@@ -375,25 +383,33 @@ def simulate_cycle(state: SimState, config: SimConfig) -> List[dict]:
     flux, trend = compute_hawking_flux(state)
     collapse_rate = compute_collapse_rate(state)
     emergence_rate = compute_emergence_rate(state)
-    criticality = compute_system_criticality(state, state.cycle)
+    base_criticality = compute_system_criticality(state, state.cycle)
 
-    # Calculate criticality rate
+    # Apply orbital decay boost (additive, non-recursive)
+    apply_decay_boost(state)
+
+    # Get effective criticality with decay boost
+    effective_criticality = get_effective_criticality(base_criticality, state.decay_boost)
+
+    # Calculate criticality rate (based on effective criticality)
     if state.cycle > 0:
-        criticality_rate = criticality - state.previous_criticality
+        criticality_rate = effective_criticality - state.previous_criticality
     else:
         criticality_rate = 0.0
 
-    # Check for criticality alert
-    check_criticality_alert(state, state.cycle, criticality)
+    # Check for criticality alert (use effective criticality)
+    check_criticality_alert(state, state.cycle, effective_criticality)
 
-    # Check for phase transition
-    check_phase_transition(state, state.cycle, criticality, H_end)
+    # Check for phase transition / horizon crossing (use effective criticality)
+    check_phase_transition(state, state.cycle, effective_criticality,
+                           base_criticality, state.decay_boost, H_end)
 
     # Update previous criticality for next cycle
-    state.previous_criticality = criticality
+    state.previous_criticality = effective_criticality
 
     hawking_flux_receipt = emit_hawking_flux_receipt(
-        state, state.cycle, flux, trend, collapse_rate, emergence_rate, criticality,
+        state, state.cycle, flux, trend, collapse_rate, emergence_rate,
+        base_criticality, effective_criticality, state.decay_boost,
         H_delta, criticality_rate
     )
     state.receipt_ledger.append(hawking_flux_receipt)
@@ -1372,6 +1388,35 @@ def compute_system_criticality(state: SimState, cycle: int) -> float:
     return total_emergences / cycle
 
 
+def apply_decay_boost(state: SimState) -> None:
+    """
+    Apply orbital decay boost to state.
+
+    Simple accumulator that adds ORBITAL_DECAY_RATE per cycle.
+    Non-recursive, additive only.
+
+    Args:
+        state: Current SimState (mutated in place)
+    """
+    state.decay_boost += ORBITAL_DECAY_RATE
+
+
+def get_effective_criticality(base_criticality: float, decay_boost: float) -> float:
+    """
+    Get effective criticality with decay boost applied.
+
+    Pure function, no side effects.
+
+    Args:
+        base_criticality: Base criticality from compute_system_criticality
+        decay_boost: Cumulative decay boost from state
+
+    Returns:
+        float: Effective criticality capped at BEKENSTEIN_CEILING
+    """
+    return min(base_criticality + decay_boost, BEKENSTEIN_CEILING)
+
+
 def check_criticality_alert(state: SimState, cycle: int, criticality: float) -> Optional[dict]:
     """
     Check if criticality alert should be emitted.
@@ -1416,33 +1461,52 @@ def check_criticality_alert(state: SimState, cycle: int, criticality: float) -> 
     return None
 
 
-def check_phase_transition(state: SimState, cycle: int, criticality: float, H_end: float) -> Optional[dict]:
+def check_phase_transition(state: SimState, cycle: int, effective_criticality: float,
+                           base_criticality: float, decay_boost: float, H_end: float) -> Optional[dict]:
     """
-    Check if phase transition (criticality >= 1.0) has occurred.
+    Check if phase transition (effective_criticality >= 1.0) has occurred.
 
     Args:
         state: Current SimState (mutated in place if transition occurs)
         cycle: Current cycle number
-        criticality: Current criticality value
+        effective_criticality: Effective criticality with decay boost applied
+        base_criticality: Base criticality from compute_system_criticality
+        decay_boost: Cumulative decay boost
         H_end: Current system entropy
 
     Returns:
-        Receipt dict if transition occurred, None otherwise
+        Receipt dict if horizon crossing occurred, None otherwise
     """
-    if criticality >= CRITICALITY_PHASE_TRANSITION and not state.phase_transition_occurred:
-        # Set transition flag
-        state.phase_transition_occurred = True
+    if effective_criticality >= CRITICALITY_PHASE_TRANSITION:
+        # Increment horizon crossings counter
+        state.horizon_crossings += 1
 
-        # Emit phase_transition receipt
-        receipt = emit_receipt("phase_transition", {
+        # Emit horizon_crossing receipt
+        receipt = emit_receipt("horizon_crossing", {
             "tenant_id": "simulation",
             "cycle": cycle,
-            "criticality": criticality,
+            "crossing_number": state.horizon_crossings,
+            "effective_criticality": effective_criticality,
+            "base_criticality": base_criticality,
+            "decay_boost": decay_boost,
             "total_emergences": state.observer_wake_count,
-            "transition_type": "quantum_leap",
-            "entropy_at_transition": H_end
+            "entropy_at_crossing": H_end
         })
         state.receipt_ledger.append(receipt)
+
+        # Also emit phase_transition receipt on first crossing only
+        if not state.phase_transition_occurred:
+            state.phase_transition_occurred = True
+            phase_receipt = emit_receipt("phase_transition", {
+                "tenant_id": "simulation",
+                "cycle": cycle,
+                "criticality": effective_criticality,
+                "total_emergences": state.observer_wake_count,
+                "transition_type": "quantum_leap",
+                "entropy_at_transition": H_end
+            })
+            state.receipt_ledger.append(phase_receipt)
+
         return receipt
 
     return None
@@ -1469,7 +1533,8 @@ def estimate_cycles_to_transition(criticality: float, criticality_rate: float) -
 
 def emit_hawking_flux_receipt(state: SimState, cycle: int, flux: float,
                               trend: str, collapse_rate: float,
-                              emergence_rate: float, criticality: float,
+                              emergence_rate: float, base_criticality: float,
+                              effective_criticality: float, decay_boost: float,
                               entropy_delta: float, criticality_rate: float) -> dict:
     """
     Emit hawking_flux receipt with rate metrics.
@@ -1483,7 +1548,9 @@ def emit_hawking_flux_receipt(state: SimState, cycle: int, flux: float,
         trend: Flux trend string
         collapse_rate: Collapse rate this cycle
         emergence_rate: Emergence rate this cycle
-        criticality: System criticality metric
+        base_criticality: Base system criticality metric
+        effective_criticality: Effective criticality with decay boost
+        decay_boost: Cumulative decay boost
         entropy_delta: H_delta (H_end - H_start) from cycle
         criticality_rate: Rate of criticality change per cycle
 
@@ -1491,8 +1558,8 @@ def emit_hawking_flux_receipt(state: SimState, cycle: int, flux: float,
         Receipt dict
     """
     # Compute additional fields
-    criticality_alert_active = criticality > CRITICALITY_ALERT_THRESHOLD
-    cycles_to_transition = estimate_cycles_to_transition(criticality, criticality_rate)
+    criticality_alert_active = effective_criticality > CRITICALITY_ALERT_THRESHOLD
+    cycles_to_transition = estimate_cycles_to_transition(effective_criticality, criticality_rate)
 
     return emit_receipt("hawking_flux", {
         "tenant_id": "simulation",
@@ -1502,7 +1569,11 @@ def emit_hawking_flux_receipt(state: SimState, cycle: int, flux: float,
         "flux_trend": trend,
         "collapse_rate": collapse_rate,
         "emergence_rate": emergence_rate,
-        "system_criticality": criticality,
+        "base_criticality": base_criticality,
+        "effective_criticality": effective_criticality,
+        "decay_boost": decay_boost,
+        "horizon_crossings": state.horizon_crossings,
+        "system_criticality": effective_criticality,
         "flux_history_length": len(state.flux_history),
         "entropy_delta": entropy_delta,
         "criticality_alert_active": criticality_alert_active,
@@ -1879,4 +1950,9 @@ __all__ = [
     "SCENARIO_GODEL",
     # Constants
     "RECEIPT_SCHEMA",
+    "ORBITAL_DECAY_RATE",
+    "BEKENSTEIN_CEILING",
+    # Orbital decay functions
+    "apply_decay_boost",
+    "get_effective_criticality",
 ]
