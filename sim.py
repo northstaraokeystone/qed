@@ -51,11 +51,14 @@ CRITICALITY_PHASE_TRANSITION = 1.0  # The quantum leap point
 ALERT_COOLDOWN_CYCLES = 50  # Prevent alert spam near threshold
 
 # Perturbation constants (stochastic GW kicks)
-PERTURBATION_PROBABILITY = 0.05  # 5% chance per cycle (clustered events)
-PERTURBATION_MAGNITUDE = 0.05   # size of kick (stronger kicks)
-PERTURBATION_DECAY = 0.75        # kick decays 25% per cycle (slower decay, kicks accumulate)
-PERTURBATION_VARIANCE = 0.15     # chaotic variance in magnitude
-BASIN_ESCAPE_THRESHOLD = 0.1     # escape detection threshold
+PERTURBATION_PROBABILITY = 0.1   # 10% chance per cycle (more frequent events)
+PERTURBATION_MAGNITUDE = 0.08    # size of kick (stronger kicks)
+PERTURBATION_DECAY = 0.7         # kick decays 30% per cycle (base decay before non-linear factor)
+PERTURBATION_VARIANCE = 0.2      # chaotic variance in magnitude (more chaos)
+BASIN_ESCAPE_THRESHOLD = 0.15    # escape detection threshold (higher bar)
+CLUSTER_LAMBDA = 2               # Poisson parameter for cluster size (avg 2 kicks per event)
+MAX_CLUSTER_SIZE = 5             # Safety cap on cluster size (prevent explosion)
+NONLINEAR_DECAY_FACTOR = 0.1     # Non-linear decay acceleration (higher boost = faster decay)
 
 # Module exports for receipt types
 RECEIPT_SCHEMA = [
@@ -798,9 +801,39 @@ def simulate_completeness(state: SimState) -> None:
             state.receipt_ledger.append(receipt)
 
 
+def poisson_manual(lam: float) -> int:
+    """
+    Generate Poisson-distributed random variable using inverse transform method.
+
+    Approximation for Poisson distribution with mean=lam.
+    Uses inverse transform sampling for simplicity (good enough for small lambda).
+
+    Args:
+        lam: Poisson parameter (mean and variance)
+
+    Returns:
+        int: Random sample from Poisson(lam) distribution
+    """
+    import math
+
+    # Knuth's algorithm for Poisson generation
+    L = math.exp(-lam)
+    k = 0
+    p = 1.0
+
+    while p > L:
+        k += 1
+        p *= random.random()
+
+    return k - 1
+
+
 def check_perturbation(state: SimState, cycle: int) -> Optional[dict]:
     """
-    Stochastic GW kick with chaotic variance. Returns receipt if fired, None otherwise.
+    Stochastic GW kick with Poisson clusters and non-linear decay.
+
+    Non-linear decay: Higher boost = faster decay (self-limiting chaos).
+    Poisson clusters: Multiple kicks per event (bursts, not single kicks).
 
     Args:
         state: Current SimState (mutated in place)
@@ -809,21 +842,37 @@ def check_perturbation(state: SimState, cycle: int) -> Optional[dict]:
     Returns:
         Receipt dict if perturbation fired, None otherwise
     """
-    # Decay existing boost first
-    state.perturbation_boost *= PERTURBATION_DECAY
+    # Apply non-linear decay BEFORE generating new kicks
+    # Formula: decay_rate = DECAY * (1 + NONLINEAR_DECAY_FACTOR * boost)
+    # Higher boost -> higher decay_rate -> faster decay (self-limiting)
+    decay_rate = PERTURBATION_DECAY * (1 + NONLINEAR_DECAY_FACTOR * state.perturbation_boost)
+    state.perturbation_boost *= (1 - decay_rate)
 
-    # Random chance of new kick
+    # Ensure boost doesn't go negative
+    state.perturbation_boost = max(0.0, state.perturbation_boost)
+
+    # Random chance of new kick cluster
     if random.random() < PERTURBATION_PROBABILITY:
-        # Apply chaotic variance to magnitude: actual_mag = max(0.01, MAG * (1 + gauss(0, VAR)))
-        actual_mag = max(0.01, PERTURBATION_MAGNITUDE * (1 + random.gauss(0, PERTURBATION_VARIANCE)))
-        state.perturbation_boost += actual_mag
+        # Generate cluster size using Poisson distribution, capped at MAX_CLUSTER_SIZE
+        cluster_size = min(poisson_manual(CLUSTER_LAMBDA), MAX_CLUSTER_SIZE)
+
+        # Apply multiple kicks in cluster
+        total_added = 0.0
+        for _ in range(cluster_size):
+            # Apply chaotic variance to magnitude: actual_mag = max(0.01, MAG * (1 + gauss(0, VAR)))
+            actual_mag = max(0.01, PERTURBATION_MAGNITUDE * (1 + random.gauss(0, PERTURBATION_VARIANCE)))
+            state.perturbation_boost += actual_mag
+            total_added += actual_mag
+
         return {
             "receipt_type": "perturbation",
             "cycle": cycle,
             "magnitude": PERTURBATION_MAGNITUDE,
-            "actual_magnitude": actual_mag,
+            "cluster_size": cluster_size,
+            "total_added": total_added,
             "total_boost": state.perturbation_boost,
-            "source": "gravitational_wave"
+            "decay_rate_at_emission": decay_rate,
+            "source": "gravitational_wave_cluster"
         }
     return None
 
@@ -1604,6 +1653,9 @@ def emit_hawking_flux_receipt(state: SimState, cycle: int, flux: float,
     # Compute escape probability
     escape_probability = compute_escape_probability(state, cycle)
 
+    # Compute current decay rate (non-linear)
+    current_decay_rate = PERTURBATION_DECAY * (1 + NONLINEAR_DECAY_FACTOR * state.perturbation_boost)
+
     return emit_receipt("hawking_flux", {
         "tenant_id": "simulation",
         "cycle": cycle,
@@ -1618,6 +1670,7 @@ def emit_hawking_flux_receipt(state: SimState, cycle: int, flux: float,
         "criticality_alert_active": criticality_alert_active,
         "cycles_to_transition": cycles_to_transition,
         "perturbation_boost": state.perturbation_boost,
+        "current_decay_rate": current_decay_rate,
         "effective_criticality": criticality + state.perturbation_boost,
         "horizon_crossings": state.horizon_crossings,
         "escape_count": state.escape_count,
