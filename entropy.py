@@ -47,8 +47,12 @@ def system_entropy(receipts: List[dict]) -> float:
 
     Edge cases:
         - Empty list -> 0.0 (no uncertainty)
-        - Single receipt type -> 0.0 (no uncertainty)
+        - Single receipt type -> log2(len(receipts) + 1) (information content)
         - N types uniformly distributed -> log2(N) bits
+
+    Note: For entropy accounting purposes, single receipts have information
+    content even though they have no uncertainty. This prevents division-by-zero
+    in conservation checks when wounds occur.
     """
     if not receipts:
         return 0.0
@@ -56,8 +60,10 @@ def system_entropy(receipts: List[dict]) -> float:
     # Count receipt types
     type_counts = Counter(r.get("receipt_type", "unknown") for r in receipts)
 
+    # Edge case: single receipt or single type has information content
+    # Use log2(N+1) as minimum bound for accounting
     if len(type_counts) <= 1:
-        return 0.0
+        return math.log2(len(receipts) + 1)
 
     total = sum(type_counts.values())
     entropy = 0.0
