@@ -51,9 +51,11 @@ CRITICALITY_PHASE_TRANSITION = 1.0  # The quantum leap point
 ALERT_COOLDOWN_CYCLES = 50  # Prevent alert spam near threshold
 
 # Perturbation constants (stochastic GW kicks)
-PERTURBATION_PROBABILITY = 0.01  # 1% chance per cycle
-PERTURBATION_MAGNITUDE = 0.03   # size of kick
-PERTURBATION_DECAY = 0.8        # kick decays 20% per cycle
+PERTURBATION_PROBABILITY = 0.05  # 5% chance per cycle (clustered events)
+PERTURBATION_MAGNITUDE = 0.05   # size of kick (stronger kicks)
+PERTURBATION_DECAY = 0.75        # kick decays 25% per cycle (slower decay, kicks accumulate)
+PERTURBATION_VARIANCE = 0.15     # chaotic variance in magnitude
+BASIN_ESCAPE_THRESHOLD = 0.1     # escape detection threshold
 
 # Module exports for receipt types
 RECEIPT_SCHEMA = [
@@ -123,6 +125,7 @@ class SimState:
     # Perturbation fields
     perturbation_boost: float = 0.0
     horizon_crossings: int = 0
+    escape_count: int = 0  # number of cycles where boost > BASIN_ESCAPE_THRESHOLD
 
 
 @dataclass(frozen=True)
@@ -404,6 +407,11 @@ def simulate_cycle(state: SimState, config: SimConfig) -> List[dict]:
     perturbation_receipt = check_perturbation(state, state.cycle)
     if perturbation_receipt:
         state.receipt_ledger.append(perturbation_receipt)
+
+    # Basin escape check
+    basin_escape_receipt = check_basin_escape(state, state.cycle)
+    if basin_escape_receipt:
+        state.receipt_ledger.append(basin_escape_receipt)
 
     # Effective criticality for threshold checks
     effective_crit = criticality + state.perturbation_boost
@@ -792,7 +800,7 @@ def simulate_completeness(state: SimState) -> None:
 
 def check_perturbation(state: SimState, cycle: int) -> Optional[dict]:
     """
-    Stochastic GW kick. Returns receipt if fired, None otherwise.
+    Stochastic GW kick with chaotic variance. Returns receipt if fired, None otherwise.
 
     Args:
         state: Current SimState (mutated in place)
@@ -806,15 +814,56 @@ def check_perturbation(state: SimState, cycle: int) -> Optional[dict]:
 
     # Random chance of new kick
     if random.random() < PERTURBATION_PROBABILITY:
-        state.perturbation_boost += PERTURBATION_MAGNITUDE
+        # Apply chaotic variance to magnitude: actual_mag = max(0.01, MAG * (1 + gauss(0, VAR)))
+        actual_mag = max(0.01, PERTURBATION_MAGNITUDE * (1 + random.gauss(0, PERTURBATION_VARIANCE)))
+        state.perturbation_boost += actual_mag
         return {
             "receipt_type": "perturbation",
             "cycle": cycle,
             "magnitude": PERTURBATION_MAGNITUDE,
+            "actual_magnitude": actual_mag,
             "total_boost": state.perturbation_boost,
             "source": "gravitational_wave"
         }
     return None
+
+
+def check_basin_escape(state: SimState, cycle: int) -> Optional[dict]:
+    """
+    Check if system is escaping attractor basin (perturbation_boost > threshold).
+
+    Args:
+        state: Current SimState (mutated in place)
+        cycle: Current cycle number
+
+    Returns:
+        Receipt dict if escape detected, None otherwise
+    """
+    if state.perturbation_boost > BASIN_ESCAPE_THRESHOLD:
+        state.escape_count += 1
+        escape_probability = compute_escape_probability(state, cycle)
+        return {
+            "receipt_type": "basin_escape",
+            "cycle": cycle,
+            "boost_at_escape": state.perturbation_boost,
+            "escape_count": state.escape_count,
+            "escape_probability": escape_probability
+        }
+    return None
+
+
+def compute_escape_probability(state: SimState, cycle: int) -> float:
+    """
+    Compute probability of basin escape based on historical escape rate.
+
+    Args:
+        state: Current SimState
+        cycle: Current cycle number
+
+    Returns:
+        float: Escape probability (escape_count / cycle)
+    """
+    return state.escape_count / max(cycle, 1)
 
 
 # =============================================================================
@@ -1552,6 +1601,9 @@ def emit_hawking_flux_receipt(state: SimState, cycle: int, flux: float,
     criticality_alert_active = criticality > CRITICALITY_ALERT_THRESHOLD
     cycles_to_transition = estimate_cycles_to_transition(criticality, criticality_rate)
 
+    # Compute escape probability
+    escape_probability = compute_escape_probability(state, cycle)
+
     return emit_receipt("hawking_flux", {
         "tenant_id": "simulation",
         "cycle": cycle,
@@ -1567,7 +1619,9 @@ def emit_hawking_flux_receipt(state: SimState, cycle: int, flux: float,
         "cycles_to_transition": cycles_to_transition,
         "perturbation_boost": state.perturbation_boost,
         "effective_criticality": criticality + state.perturbation_boost,
-        "horizon_crossings": state.horizon_crossings
+        "horizon_crossings": state.horizon_crossings,
+        "escape_count": state.escape_count,
+        "escape_probability": escape_probability
     })
 
 
