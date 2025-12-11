@@ -15,6 +15,7 @@ import json
 import random
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
+from enum import Enum
 
 from entropy import system_entropy, agent_fitness, emit_receipt, dual_hash
 from autocatalysis import autocatalysis_check, coherence_score, is_alive
@@ -34,7 +35,12 @@ TOLERANCE_CEILING = 0.5  # Above 50% uncertainty = admit chaos
 ENTROPY_HISTORY_WINDOW = 20  # Cycles for variance calculation
 
 # Observer paradigm constants
-PLANCK_ENTROPY = 0.001  # Minimum entropy of existence, floor for all measurements
+PLANCK_ENTROPY_BASE = 0.001  # Base minimum entropy of existence (fluctuating floor)
+PLANCK_ENTROPY = PLANCK_ENTROPY_BASE  # Backward compatibility
+VACUUM_VARIANCE = 0.1  # Fluctuation magnitude (10% of base)
+GENESIS_THRESHOLD = 3.0  # Bits of observation cost that can spark emergence
+VIRTUAL_LIFESPAN = 3  # Cycles before collapse back to SUPERPOSITION
+HAWKING_COEFFICIENT = 0.1  # Entropy emission rate at boundary
 LANDAUER_COEFFICIENT = 1.0  # Scales observation cost (calibrated, do not change)
 
 # Module exports for receipt types
@@ -42,6 +48,13 @@ RECEIPT_SCHEMA = [
     "sim_config", "sim_cycle", "sim_birth", "sim_death",
     "sim_mate", "sim_complete", "sim_violation", "sim_result"
 ]
+
+# Pattern state enum
+class PatternState(Enum):
+    """Pattern existence states in observer-induced genesis model."""
+    SUPERPOSITION = "SUPERPOSITION"  # Dormant potential
+    VIRTUAL = "VIRTUAL"  # Brief existence, needs re-observation to survive
+    ACTIVE = "ACTIVE"  # Fully materialized
 
 # =============================================================================
 # DATACLASSES (3 required)
@@ -65,6 +78,7 @@ class SimState:
     """Mutable simulation state."""
     active_patterns: List[dict] = field(default_factory=list)
     superposition_patterns: List[dict] = field(default_factory=list)
+    virtual_patterns: List[dict] = field(default_factory=list)  # NEW: VIRTUAL state patterns
     wound_history: List[dict] = field(default_factory=list)
     receipt_ledger: List[dict] = field(default_factory=list)
     entropy_trace: List[float] = field(default_factory=list)
@@ -76,6 +90,9 @@ class SimState:
     H_previous: float = 0.0  # System entropy at previous cycle end
     H_boundary_this_cycle: float = 0.0  # Accumulated boundary crossing entropy this cycle
     operations_this_cycle: int = 0  # Count of observations/decisions made this cycle
+    # Vacuum fluctuation fields
+    vacuum_floor: float = PLANCK_ENTROPY_BASE  # Current fluctuating floor
+    hawking_emissions_this_cycle: float = 0.0  # Boundary radiation emitted
     # Per-cycle tracking for adaptive tolerance computation
     births_this_cycle: int = 0
     deaths_this_cycle: int = 0
@@ -187,7 +204,9 @@ def initialize_state(config: SimConfig) -> SimState:
             "fitness_mean": 0.5,
             "fitness_var": 0.1,
             "domain": origin,
-            "problem_type": "core"
+            "problem_type": "core",
+            "state": PatternState.ACTIVE.value,
+            "virtual_lifespan": 0
         }
         # Add self-referencing receipt to make autocatalytic
         pattern["receipts"].append({
@@ -208,7 +227,9 @@ def initialize_state(config: SimConfig) -> SimState:
             "fitness_mean": random.uniform(0.3, 0.7),
             "fitness_var": random.uniform(0.05, 0.15),
             "domain": f"domain_{i % 3}",
-            "problem_type": "operational"
+            "problem_type": "operational",
+            "state": PatternState.ACTIVE.value,
+            "virtual_lifespan": 0
         }
         # Make some autocatalytic
         if random.random() > 0.5:
@@ -251,8 +272,12 @@ def simulate_cycle(state: SimState, config: SimConfig) -> List[dict]:
     state.superposition_transitions_this_cycle = 0
     state.wounds_this_cycle = 0
 
-    # CYCLE START: Measure initial entropy state
-    H_start = measure_state(state.receipt_ledger)
+    # CYCLE START: Vacuum fluctuation and reset boundary emissions
+    state.vacuum_floor = vacuum_fluctuation()
+    state.hawking_emissions_this_cycle = 0.0
+
+    # Measure initial entropy state (using fluctuating vacuum floor)
+    H_start = measure_state(state.receipt_ledger, state.vacuum_floor)
     state.H_boundary_this_cycle = 0.0
     state.operations_this_cycle = 0
 
@@ -291,8 +316,30 @@ def simulate_cycle(state: SimState, config: SimConfig) -> List[dict]:
     simulate_completeness(state)
 
     # CYCLE END: Measure final entropy state
-    H_end = measure_state(state.receipt_ledger)
+    H_end = measure_state(state.receipt_ledger, state.vacuum_floor)
     H_observation = measure_observation_cost(state.operations_this_cycle)
+
+    # Attempt spontaneous emergence (observer-induced genesis)
+    emergence_receipt = attempt_spontaneous_emergence(state, H_observation)
+    if emergence_receipt is not None:
+        state.births_this_cycle += 1
+
+    # Process virtual patterns (decay or survival)
+    collapsed_ids = process_virtual_patterns(state)
+
+    # Emit vacuum_state receipt
+    vacuum_state_receipt = emit_receipt("vacuum_state", {
+        "tenant_id": "simulation",
+        "cycle": state.cycle,
+        "vacuum_floor": state.vacuum_floor,
+        "fluctuation_delta": state.vacuum_floor - PLANCK_ENTROPY_BASE,
+        "virtual_patterns_count": len(state.virtual_patterns),
+        "superposition_patterns_count": len(state.superposition_patterns),
+        "spontaneous_emergence_attempted": emergence_receipt is not None,
+        "hawking_emissions_this_cycle": state.hawking_emissions_this_cycle
+    })
+    state.receipt_ledger.append(vacuum_state_receipt)
+
     H_delta = H_end - H_start
     balance = state.H_boundary_this_cycle + H_observation + H_delta
 
@@ -423,27 +470,81 @@ def simulate_selection(state: SimState) -> None:
     """
     Apply selection pressure via population.py.
 
+    Handles ACTIVE and VIRTUAL patterns:
+    - ACTIVE patterns: normal selection (survivors stay ACTIVE, failures → SUPERPOSITION)
+    - VIRTUAL patterns: pass → promote to ACTIVE, fail → return to SUPERPOSITION
+
     Args:
         state: Current SimState (mutated in place)
     """
-    if not state.active_patterns:
+    if not state.active_patterns and not state.virtual_patterns:
         return
 
-    survivors, superposition = selection_pressure(state.active_patterns, "simulation")
+    # Apply selection to active patterns
+    if state.active_patterns:
+        survivors, superposition = selection_pressure(state.active_patterns, "simulation")
 
-    # Track superposition transitions
-    state.superposition_transitions_this_cycle += len(superposition)
+        # Track superposition transitions
+        state.superposition_transitions_this_cycle += len(superposition)
 
-    # Update active patterns (SELF always survive)
-    state.active_patterns = survivors
-    state.superposition_patterns.extend(superposition)
+        # Update active patterns (SELF always survive)
+        state.active_patterns = survivors
+        state.superposition_patterns.extend(superposition)
+
+    # Apply selection to virtual patterns
+    virtual_promoted = []
+    virtual_collapsed = []
+
+    if state.virtual_patterns:
+        # Combine virtual patterns with active for selection consideration
+        virtual_survivors, virtual_failures = selection_pressure(state.virtual_patterns, "simulation")
+
+        # Virtual patterns that pass selection: promote to ACTIVE
+        for pattern in virtual_survivors:
+            pattern["state"] = PatternState.ACTIVE.value
+            pattern["virtual_lifespan"] = 0  # No longer virtual
+            virtual_promoted.append(pattern)
+
+            # Emit virtual_promotion receipt
+            receipt = emit_receipt("virtual_promotion", {
+                "tenant_id": "simulation",
+                "pattern_id": pattern["pattern_id"],
+                "promoted_to": "ACTIVE",
+                "survival_reason": "selection_passed",
+                "cycle": state.cycle
+            })
+            state.receipt_ledger.append(receipt)
+
+        # Virtual patterns that fail selection: return to SUPERPOSITION
+        for pattern in virtual_failures:
+            pattern["state"] = PatternState.SUPERPOSITION.value
+            pattern["virtual_lifespan"] = 0
+            virtual_collapsed.append(pattern)
+
+            # Emit virtual_collapse receipt
+            receipt = emit_receipt("virtual_collapse", {
+                "tenant_id": "simulation",
+                "pattern_id": pattern["pattern_id"],
+                "lifespan_at_collapse": pattern.get("virtual_lifespan", 0),
+                "destination_state": "SUPERPOSITION",
+                "was_reobserved": False,
+                "cycle": state.cycle
+            })
+            state.receipt_ledger.append(receipt)
+
+        # Update state
+        state.active_patterns.extend(virtual_promoted)
+        state.superposition_patterns.extend(virtual_collapsed)
+        state.virtual_patterns = []  # Clear virtual list (all processed)
 
     # Emit selection_event receipt
     receipt = emit_receipt("selection_event", {
         "tenant_id": "simulation",
         "cycle": state.cycle,
-        "survivors": len(survivors),
-        "to_superposition": len(superposition)
+        "survivors": len(state.active_patterns),
+        "to_superposition": state.superposition_transitions_this_cycle,
+        "virtual_promoted": len(virtual_promoted),
+        "virtual_collapsed": len(virtual_collapsed)
     })
     state.receipt_ledger.append(receipt)
 
@@ -479,7 +580,9 @@ def simulate_recombination(state: SimState, config: SimConfig) -> None:
             "fitness_var": 0.1,
             "domain": pattern_a.get("domain", "unknown"),
             "problem_type": pattern_a.get("problem_type", "operational"),
-            "prev_coherence": 0.0
+            "prev_coherence": 0.0,
+            "state": PatternState.ACTIVE.value,
+            "virtual_lifespan": 0
         }
 
         # Check viability via autocatalysis
@@ -540,7 +643,9 @@ def simulate_genesis(state: SimState, config: SimConfig) -> None:
                 "fitness_var": 0.1,
                 "domain": "automation",
                 "problem_type": gap.get("problem_type", "operational"),
-                "prev_coherence": 0.0
+                "prev_coherence": 0.0,
+                "state": PatternState.ACTIVE.value,
+                "virtual_lifespan": 0
             }
             # Make autocatalytic
             pattern["receipts"].append({
@@ -836,7 +941,7 @@ def validate_conservation(state: SimState) -> bool:
     # (already computed in simulate_cycle and stored in the receipt)
     # We can recalculate it here for validation
     H_start = state.H_previous if state.cycle > 0 else state.H_genesis
-    H_end = measure_state(state.receipt_ledger)
+    H_end = measure_state(state.receipt_ledger, state.vacuum_floor)
     H_delta = H_end - H_start
     balance = state.H_boundary_this_cycle + measure_observation_cost(state.operations_this_cycle) + H_delta
 
@@ -904,18 +1009,22 @@ def entropy_trace_recording(state: SimState) -> None:
 # OBSERVER PARADIGM MEASUREMENT FUNCTIONS (4 required)
 # =============================================================================
 
-def measure_state(receipt_ledger: list) -> float:
+def measure_state(receipt_ledger: list, vacuum_floor: float = None) -> float:
     """
     Measure current system entropy state.
 
     Args:
         receipt_ledger: List of receipts
+        vacuum_floor: Optional fluctuating vacuum floor (defaults to PLANCK_ENTROPY)
 
     Returns:
-        float: System entropy, never returns 0 (minimum PLANCK_ENTROPY)
+        float: System entropy, never returns 0 (minimum vacuum_floor)
     """
+    if vacuum_floor is None:
+        vacuum_floor = PLANCK_ENTROPY
+
     result = system_entropy(receipt_ledger)
-    return max(result, PLANCK_ENTROPY)
+    return max(result, vacuum_floor)
 
 
 def measure_observation_cost(operations: int) -> float:
@@ -973,6 +1082,168 @@ def measure_genesis(initial_patterns: list) -> float:
 
     result = system_entropy(initial_pattern_receipts)
     return max(result, PLANCK_ENTROPY)
+
+
+# =============================================================================
+# VACUUM FLUCTUATION AND VIRTUAL PATTERNS (observer-induced genesis)
+# =============================================================================
+
+def vacuum_fluctuation() -> float:
+    """
+    Generate fluctuating zero-point energy.
+
+    Vacuum isn't static - it fluctuates. This replaces the static PLANCK_ENTROPY
+    with a time-varying floor that follows quantum field theory principles.
+
+    Formula: PLANCK_ENTROPY_BASE * (1 + random.gauss(0, VACUUM_VARIANCE))
+    Clamped to minimum PLANCK_ENTROPY_BASE * 0.5 (can't go negative or too low)
+
+    Returns:
+        float: Fluctuating vacuum floor entropy
+    """
+    fluctuation = PLANCK_ENTROPY_BASE * (1.0 + random.gauss(0, VACUUM_VARIANCE))
+    # Clamp to minimum 50% of base (prevent negative or too-low values)
+    return max(fluctuation, PLANCK_ENTROPY_BASE * 0.5)
+
+
+def attempt_spontaneous_emergence(state: SimState, H_observation: float) -> Optional[dict]:
+    """
+    Attempt observer-induced pattern genesis from vacuum.
+
+    High observation cost can spark pattern emergence from superposition.
+    This is the core of observer-induced genesis: the observer creates, not just measures.
+
+    Args:
+        state: Current SimState (mutated in place if emergence occurs)
+        H_observation: Observation cost this cycle
+
+    Returns:
+        Receipt dict if emergence occurred, None otherwise
+    """
+    # Check conditions for spontaneous emergence
+    if H_observation <= GENESIS_THRESHOLD:
+        return None
+
+    if len(state.superposition_patterns) == 0:
+        return None
+
+    # Select pattern from superposition (weighted by fitness if available)
+    weights = []
+    for pattern in state.superposition_patterns:
+        fitness = pattern.get("fitness_mean", pattern.get("fitness", 0.5))
+        weights.append(fitness)
+
+    # Normalize weights
+    total_weight = sum(weights)
+    if total_weight == 0:
+        weights = [1.0] * len(state.superposition_patterns)
+        total_weight = len(state.superposition_patterns)
+
+    weights = [w / total_weight for w in weights]
+
+    # Select pattern
+    selected_pattern = random.choices(state.superposition_patterns, weights=weights, k=1)[0]
+
+    # Remove from superposition, add to virtual
+    state.superposition_patterns.remove(selected_pattern)
+    selected_pattern["state"] = PatternState.VIRTUAL.value
+    selected_pattern["virtual_lifespan"] = VIRTUAL_LIFESPAN
+    state.virtual_patterns.append(selected_pattern)
+
+    # Emit spontaneous_emergence receipt
+    receipt = emit_receipt("spontaneous_emergence", {
+        "tenant_id": "simulation",
+        "triggering_observation_cost": H_observation,
+        "emerged_pattern_id": selected_pattern["pattern_id"],
+        "source_state": "SUPERPOSITION",
+        "destination_state": "VIRTUAL",
+        "cycle": state.cycle
+    })
+    state.receipt_ledger.append(receipt)
+
+    return receipt
+
+
+def process_virtual_patterns(state: SimState) -> List[str]:
+    """
+    Process VIRTUAL patterns - decay or survive based on re-observation.
+
+    Virtual patterns are ephemeral. They need re-observation to survive,
+    otherwise they collapse back to SUPERPOSITION.
+
+    Args:
+        state: Current SimState (mutated in place)
+
+    Returns:
+        List of collapsed pattern IDs
+    """
+    collapsed_ids = []
+    to_remove = []
+
+    for i, pattern in enumerate(state.virtual_patterns):
+        # Decrement lifespan
+        pattern["virtual_lifespan"] = pattern.get("virtual_lifespan", VIRTUAL_LIFESPAN) - 1
+
+        # Check if pattern was re-observed this cycle
+        # A pattern is "re-observed" if it has receipts added this cycle
+        # For simplicity, we'll check if it passed autocatalysis or has recent receipts
+        was_reobserved = False
+        if autocatalysis_check(pattern):
+            was_reobserved = True
+            # Reset lifespan (survival)
+            pattern["virtual_lifespan"] = VIRTUAL_LIFESPAN
+
+        # Check for collapse
+        if pattern["virtual_lifespan"] <= 0 and not was_reobserved:
+            # Collapse back to SUPERPOSITION
+            pattern["state"] = PatternState.SUPERPOSITION.value
+            pattern["virtual_lifespan"] = 0
+            state.superposition_patterns.append(pattern)
+            to_remove.append(i)
+            collapsed_ids.append(pattern["pattern_id"])
+
+            # Emit virtual_collapse receipt
+            receipt = emit_receipt("virtual_collapse", {
+                "tenant_id": "simulation",
+                "pattern_id": pattern["pattern_id"],
+                "lifespan_at_collapse": 0,
+                "destination_state": "SUPERPOSITION",
+                "was_reobserved": False,
+                "cycle": state.cycle
+            })
+            state.receipt_ledger.append(receipt)
+
+    # Remove collapsed patterns from virtual list
+    for i in reversed(to_remove):
+        state.virtual_patterns.pop(i)
+
+    return collapsed_ids
+
+
+def emit_hawking_entropy(state: SimState, pattern: dict) -> float:
+    """
+    Emit Hawking radiation when pattern crosses boundary.
+
+    When patterns cross phase boundaries (e.g., ACTIVE to emission),
+    they emit radiation similar to Hawking radiation at event horizons.
+
+    Args:
+        state: Current SimState (mutated in place)
+        pattern: Pattern crossing boundary
+
+    Returns:
+        float: Emitted entropy amount
+    """
+    # Measure boundary crossing entropy
+    boundary_entropy = measure_boundary_crossing(pattern)
+
+    # Apply Hawking coefficient
+    emitted = boundary_entropy * HAWKING_COEFFICIENT
+
+    # Accumulate to this cycle's emissions
+    state.hawking_emissions_this_cycle += emitted
+
+    return emitted
 
 
 # =============================================================================
