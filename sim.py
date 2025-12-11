@@ -54,11 +54,15 @@ ALERT_COOLDOWN_CYCLES = 50  # Prevent alert spam near threshold
 PERTURBATION_PROBABILITY = 0.15  # 15% chance per cycle (more frequent events)
 PERTURBATION_MAGNITUDE = 0.1     # size of kick (stronger kicks)
 PERTURBATION_DECAY = 0.65        # kick decays 35% per cycle (base decay before non-linear factor)
-PERTURBATION_VARIANCE = 0.25     # chaotic variance in magnitude (more chaos)
+PERTURBATION_VARIANCE = 0.3      # chaotic variance in magnitude (amplified chaos)
 BASIN_ESCAPE_THRESHOLD = 0.2     # escape detection threshold (higher bar)
 CLUSTER_LAMBDA = 3               # Poisson parameter for cluster size (avg 3 kicks per event)
 MAX_CLUSTER_SIZE = 5             # Safety cap on cluster size (prevent explosion)
 NONLINEAR_DECAY_FACTOR = 0.15    # Non-linear decay acceleration (higher boost = faster decay)
+
+# Evolution tracking constants
+EVOLUTION_WINDOW = 500           # cycles between evolution snapshots
+MAX_MAGNITUDE_FACTOR = 3.0       # cap on magnitude multiplier (prevent explosion)
 
 # Adaptive feedback constants (threshold-based state changes)
 ADAPTIVE_THRESHOLD = 0.2         # triggers probability boost when boost > threshold
@@ -139,6 +143,12 @@ class SimState:
     cycles_since_crossing: int = 0  # post-breach stability counter
     max_consecutive_escapes: int = 0  # track emergent structure peak
     adaptive_triggers: int = 0  # count how often adaptive kicked in
+    # Evolution tracking fields (500-cycle windows)
+    evolution_snapshots: list = field(default_factory=list)  # evolution receipts
+    window_escapes: int = 0  # escapes in current window
+    window_perturbations: int = 0  # perturbations in current window
+    last_evolution_cycle: int = 0  # track last snapshot cycle
+    window_boost_samples: list = field(default_factory=list)  # boost samples for avg
 
 
 @dataclass(frozen=True)
@@ -424,11 +434,21 @@ def simulate_cycle(state: SimState, config: SimConfig) -> List[dict]:
     perturbation_receipt = check_perturbation(state, state.cycle)
     if perturbation_receipt:
         state.receipt_ledger.append(perturbation_receipt)
+        state.window_perturbations += 1  # Track for evolution window
 
     # Basin escape check
     basin_escape_receipt = check_basin_escape(state, state.cycle)
     if basin_escape_receipt:
         state.receipt_ledger.append(basin_escape_receipt)
+        state.window_escapes += 1  # Track for evolution window
+
+    # Track boost sample for evolution window (every cycle)
+    state.window_boost_samples.append(state.perturbation_boost)
+
+    # Evolution window check (every 500 cycles)
+    evolution_receipt = check_evolution_window(state, state.cycle)
+    if evolution_receipt:
+        state.receipt_ledger.append(evolution_receipt)
 
     # Effective criticality for threshold checks
     effective_crit = criticality + state.perturbation_boost
@@ -871,11 +891,12 @@ def compute_effective_probability(state: SimState) -> float:
 
 def check_perturbation(state: SimState, cycle: int) -> Optional[dict]:
     """
-    Stochastic GW kick with Poisson clusters, non-linear decay, and adaptive feedback.
+    Stochastic GW kick with Poisson clusters, non-linear decay, adaptive feedback, and quantum variance.
 
     Non-linear decay: Higher boost = faster decay (self-limiting chaos).
     Poisson clusters: Multiple kicks per event (bursts, not single kicks).
     Adaptive feedback: Probability increases when boost > ADAPTIVE_THRESHOLD.
+    Quantum variance: Vacuum fluctuation breathes into magnitude variance.
 
     Args:
         state: Current SimState (mutated in place)
@@ -906,11 +927,25 @@ def check_perturbation(state: SimState, cycle: int) -> Optional[dict]:
         # Generate cluster size using Poisson distribution, capped at MAX_CLUSTER_SIZE
         cluster_size = min(poisson_manual(CLUSTER_LAMBDA), MAX_CLUSTER_SIZE)
 
+        # Apply quantum-inspired variance (reuse existing vacuum_fluctuation())
+        # quantum_factor = vacuum_fluctuation() / PLANCK_ENTROPY_BASE (ratio ~1.0 ± 0.1)
+        quantum_factor = vacuum_fluctuation() / PLANCK_ENTROPY_BASE
+
+        # Combined variance: variance_factor = 1 + gauss(0, VAR) * quantum_factor
+        base_variance = random.gauss(0, PERTURBATION_VARIANCE)
+        variance_factor = 1.0 + base_variance * quantum_factor
+
+        # Cap variance_factor to prevent explosion
+        variance_factor_uncapped = variance_factor
+        variance_factor = max(0.1, min(MAX_MAGNITUDE_FACTOR, variance_factor))
+        capped = (variance_factor_uncapped != variance_factor)
+
         # Apply multiple kicks in cluster
         total_added = 0.0
         for _ in range(cluster_size):
-            # Apply chaotic variance to magnitude: actual_mag = max(0.01, MAG * (1 + gauss(0, VAR)))
-            actual_mag = max(0.01, PERTURBATION_MAGNITUDE * (1 + random.gauss(0, PERTURBATION_VARIANCE)))
+            # Apply quantum-amplified variance to magnitude
+            actual_mag = PERTURBATION_MAGNITUDE * variance_factor
+            actual_mag = max(0.01, actual_mag)  # Minimum magnitude
             state.perturbation_boost += actual_mag
             total_added += actual_mag
 
@@ -924,7 +959,10 @@ def check_perturbation(state: SimState, cycle: int) -> Optional[dict]:
             "decay_rate_at_emission": decay_rate,
             "effective_probability": effective_prob,
             "adaptive_active": adaptive_active,
-            "source": "gravitational_wave_cluster"
+            "quantum_factor": quantum_factor,
+            "variance_factor": variance_factor,
+            "capped": capped,
+            "source": "gravitational_wave_cluster_quantum"
         }
     return None
 
@@ -980,6 +1018,64 @@ def compute_escape_probability(state: SimState, cycle: int) -> float:
         float: Escape probability (escape_count / cycle)
     """
     return state.escape_count / max(cycle, 1)
+
+
+def check_evolution_window(state: SimState, cycle: int) -> Optional[dict]:
+    """
+    Check if evolution window (500 cycles) has elapsed and emit evolution receipt.
+
+    Tracks system evolution metrics per 500-cycle window:
+    - Escape rate
+    - Perturbation rate
+    - Average boost
+    - Consecutive escape peak
+    - Adaptive triggers
+
+    Args:
+        state: Current SimState (mutated in place if window elapsed)
+        cycle: Current cycle number
+
+    Returns:
+        Receipt dict if window elapsed, None otherwise
+    """
+    # Check if window has elapsed
+    if cycle - state.last_evolution_cycle >= EVOLUTION_WINDOW:
+        # Compute window metrics
+        escape_rate = state.window_escapes / EVOLUTION_WINDOW
+        perturbation_rate = state.window_perturbations / EVOLUTION_WINDOW
+
+        # Compute avg_boost (average of boost samples)
+        if state.window_boost_samples:
+            avg_boost = sum(state.window_boost_samples) / len(state.window_boost_samples)
+        else:
+            avg_boost = 0.0
+
+        # Emit evolution_receipt
+        receipt = emit_receipt("evolution", {
+            "tenant_id": "simulation",
+            "window_start": state.last_evolution_cycle,
+            "window_end": cycle,
+            "escape_rate": escape_rate,
+            "perturbation_rate": perturbation_rate,
+            "avg_boost": avg_boost,
+            "consecutive_max": state.max_consecutive_escapes,
+            "adaptive_triggers_in_window": state.adaptive_triggers
+        })
+
+        # Reset window counters
+        state.window_escapes = 0
+        state.window_perturbations = 0
+        state.window_boost_samples = []
+
+        # Update last_evolution_cycle
+        state.last_evolution_cycle = cycle
+
+        # Append to evolution_snapshots
+        state.evolution_snapshots.append(receipt)
+
+        return receipt
+
+    return None
 
 
 # =============================================================================
