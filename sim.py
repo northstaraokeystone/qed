@@ -51,22 +51,25 @@ CRITICALITY_PHASE_TRANSITION = 1.0  # The quantum leap point
 ALERT_COOLDOWN_CYCLES = 50  # Prevent alert spam near threshold
 
 # Perturbation constants (stochastic GW kicks)
-PERTURBATION_PROBABILITY = 0.25  # 25% chance per cycle (more frequent events)
-PERTURBATION_MAGNITUDE = 0.15    # size of kick (stronger kicks)
-PERTURBATION_DECAY = 0.55        # kick decays 45% per cycle (base decay before non-linear factor)
-PERTURBATION_VARIANCE = 0.4      # chaotic variance in magnitude (amplified chaos)
+PERTURBATION_PROBABILITY = 0.3   # 30% chance per cycle (more frequent events)
+PERTURBATION_MAGNITUDE = 0.18    # size of kick (stronger kicks)
+PERTURBATION_DECAY = 0.5         # kick decays 50% per cycle (base decay before non-linear factor)
+PERTURBATION_VARIANCE = 0.45     # chaotic variance in magnitude (amplified chaos)
 BASIN_ESCAPE_THRESHOLD = 0.2     # escape detection threshold (higher bar)
 CLUSTER_LAMBDA = 3               # Poisson parameter for cluster size (avg 3 kicks per event)
 MAX_CLUSTER_SIZE = 5             # Safety cap on cluster size (prevent explosion)
 NONLINEAR_DECAY_FACTOR = 0.15    # Non-linear decay acceleration (higher boost = faster decay)
+ASYMMETRY_BIAS = 0.1             # directional preference for symmetry breaking
+CLUSTER_PERSISTENCE_THRESHOLD = 15  # cycles needed for persistent cluster
+SYMMETRY_BREAK_THRESHOLD = 3     # symmetry breaks needed for proto-form
 
 # Evolution tracking constants
 EVOLUTION_WINDOW = 500           # cycles between evolution snapshots
 MAX_MAGNITUDE_FACTOR = 3.0       # cap on magnitude multiplier (prevent explosion)
 
 # Adaptive feedback constants (threshold-based state changes)
-ADAPTIVE_THRESHOLD = 0.3         # triggers probability boost when boost > threshold
-SYNC_BOOST = 0.15                # probability increase amount for synced kicks (replaces ADAPTIVE_BOOST)
+ADAPTIVE_THRESHOLD = 0.35        # triggers probability boost when boost > threshold
+SYNC_BOOST = 0.2                 # probability increase amount for synced kicks (replaces ADAPTIVE_BOOST)
 MAX_PROBABILITY = 0.5            # cap to prevent runaway
 
 # Phase synchronization constants (wave interference)
@@ -76,8 +79,8 @@ CLUSTER_THRESHOLD = 5            # minimum consecutive same-type receipts for cl
 SYMMETRY_SAMPLE_SIZE = 100       # only check last N receipts for symmetry (performance optimization)
 
 # Resonance amplification constants
-RESONANCE_PROBABILITY = 0.5      # 50% chance kick resonates
-INTERFERENCE_AMPLITUDE = 0.15    # interference strength multiplier
+RESONANCE_PROBABILITY = 0.6      # 60% chance kick resonates
+INTERFERENCE_AMPLITUDE = 0.2     # interference strength multiplier
 RESONANCE_PEAK_THRESHOLD = 0.25  # boost level for peak detection
 STRUCTURE_THRESHOLD = 10         # clusters needed for structure formation
 MAX_RESONANCE_AMPLIFICATION = 2.0  # cap on resonance boost
@@ -178,6 +181,13 @@ class SimState:
     baseline_boost: float = 0.0  # running average of boost
     baseline_shifts: int = 0  # number of significant shifts
     initial_baseline: float = 0.0  # baseline at start
+    # Asymmetry and proto-form tracking fields
+    bias_direction: int = 1  # current bias direction (+1 or -1)
+    cluster_start_cycle: int = 0  # when current cluster started
+    current_cluster_duration: int = 0  # how long current cluster
+    persistent_clusters: int = 0  # clusters that lasted 15+ cycles
+    proto_form_count: int = 0  # proto-structures detected
+    proto_form_active: bool = False  # is a proto-form currently active
 
 
 @dataclass(frozen=True)
@@ -464,10 +474,10 @@ def simulate_cycle(state: SimState, config: SimConfig) -> List[dict]:
     if perturbation_receipt:
         state.receipt_ledger.append(perturbation_receipt)
         state.window_perturbations += 1  # Track for evolution window
-        # Check for cluster detection on perturbation receipts
-        cluster_receipt = check_cluster(state, perturbation_receipt["receipt_type"])
-        if cluster_receipt:
-            state.receipt_ledger.append(cluster_receipt)
+        # Check for persistent cluster detection on perturbation receipts
+        persistent_cluster_receipt = check_cluster_persistence(state, perturbation_receipt["receipt_type"], state.cycle)
+        if persistent_cluster_receipt:
+            state.receipt_ledger.append(persistent_cluster_receipt)
 
     # Resonance peak check (after perturbation)
     resonance_peak_receipt = check_resonance_peak(state, state.cycle)
@@ -502,6 +512,11 @@ def simulate_cycle(state: SimState, config: SimConfig) -> List[dict]:
     symmetry_break_receipt = check_symmetry_break(state, state.receipt_ledger, state.cycle)
     if symmetry_break_receipt:
         state.receipt_ledger.append(symmetry_break_receipt)
+
+    # Proto-form check (ONLY at evolution window intervals)
+    proto_form_receipt = check_proto_form(state, state.cycle)
+    if proto_form_receipt:
+        state.receipt_ledger.append(proto_form_receipt)
 
     # Effective criticality for threshold checks
     effective_crit = criticality + state.perturbation_boost
@@ -1029,6 +1044,30 @@ def compute_effective_probability(state: SimState, synced: bool) -> float:
     return effective_prob
 
 
+def apply_asymmetry_bias(magnitude: float, state: SimState) -> float:
+    """
+    Apply asymmetry bias to perturbation magnitude.
+
+    Simple sign-based multiplier that breaks symmetry by favoring one direction.
+    Bias direction flips stochastically (10% chance per call).
+
+    Args:
+        magnitude: Base perturbation magnitude
+        state: Current SimState (mutated in place if direction flips)
+
+    Returns:
+        float: Biased magnitude
+    """
+    # Flip bias direction with small probability (10%)
+    if random.random() < 0.1:
+        state.bias_direction *= -1
+
+    # Apply bias: biased_mag = magnitude * (1 + ASYMMETRY_BIAS * bias_direction)
+    biased_mag = magnitude * (1 + ASYMMETRY_BIAS * state.bias_direction)
+
+    return biased_mag
+
+
 def check_resonance(state: SimState) -> tuple[bool, float]:
     """
     Check if perturbation kick resonates.
@@ -1119,6 +1158,7 @@ def check_perturbation(state: SimState, cycle: int) -> Optional[dict]:
 
         # Apply multiple kicks in cluster
         total_added = 0.0
+        biased_magnitude = 0.0  # Initialize for receipt (will be set on first kick)
         for _ in range(cluster_size):
             # Apply quantum-amplified variance to magnitude
             actual_mag = PERTURBATION_MAGNITUDE * variance_factor
@@ -1126,7 +1166,13 @@ def check_perturbation(state: SimState, cycle: int) -> Optional[dict]:
             # Interference ranges -1 to +1, so multiplier ranges 0.5 to 1.5
             effective_mag = actual_mag * (1.0 + 0.5 * interference)
             # Apply resonance amplification
-            final_mag = effective_mag * resonance_factor
+            resonance_mag = effective_mag * resonance_factor
+            # Apply asymmetry bias (ONLY on first kick to avoid compounding)
+            if _ == 0:
+                final_mag = apply_asymmetry_bias(resonance_mag, state)
+                biased_magnitude = final_mag  # Store for receipt
+            else:
+                final_mag = resonance_mag
             # Clamp to positive minimum
             final_mag = max(0.01, final_mag)
             state.perturbation_boost += final_mag
@@ -1164,7 +1210,9 @@ def check_perturbation(state: SimState, cycle: int) -> Optional[dict]:
             "interference_type": interference_type,
             "resonance_hit": resonance_hit,
             "resonance_factor": resonance_factor,
-            "source": "gravitational_wave_cluster_quantum_interference"
+            "bias_direction": state.bias_direction,
+            "biased_magnitude": biased_magnitude,
+            "source": "gravitational_wave_cluster_quantum_interference_asymmetry"
         }
     return None
 
@@ -1251,9 +1299,9 @@ def check_resonance_peak(state: SimState, cycle: int) -> Optional[dict]:
 
 def check_structure_formation(state: SimState, cycle: int) -> Optional[dict]:
     """
-    Check if structure has formed via cluster detection.
+    Check if structure has formed via persistent clusters, symmetry breaks, and proto-forms.
 
-    Structure formation: cluster_count >= STRUCTURE_THRESHOLD.
+    Structure formation: persistent_clusters > 0 AND symmetry_breaks >= SYMMETRY_BREAK_THRESHOLD AND proto_form_count > 0.
     Only emits receipt once (first time structure forms).
 
     Args:
@@ -1263,7 +1311,11 @@ def check_structure_formation(state: SimState, cycle: int) -> Optional[dict]:
     Returns:
         Receipt dict if structure formed, None otherwise
     """
-    if state.cluster_count >= STRUCTURE_THRESHOLD and not state.structure_formed:
+    # NEW condition: persistent_clusters > 0 AND symmetry_breaks >= SYMMETRY_BREAK_THRESHOLD AND proto_form_count > 0
+    if (state.persistent_clusters > 0 and
+        state.symmetry_breaks >= SYMMETRY_BREAK_THRESHOLD and
+        state.proto_form_count > 0 and
+        not state.structure_formed):
         # Mark structure as formed
         state.structure_formed = True
         state.structure_formation_cycle = cycle
@@ -1271,7 +1323,9 @@ def check_structure_formation(state: SimState, cycle: int) -> Optional[dict]:
         return {
             "receipt_type": "structure_formation",
             "cycle": cycle,
-            "cluster_count": state.cluster_count
+            "persistent_clusters": state.persistent_clusters,
+            "symmetry_breaks": state.symmetry_breaks,
+            "proto_form_count": state.proto_form_count
         }
     return None
 
@@ -1376,43 +1430,89 @@ def check_evolution_window(state: SimState, cycle: int) -> Optional[dict]:
     return None
 
 
-def check_cluster(state: SimState, receipt_type: str) -> Optional[dict]:
+def check_cluster_persistence(state: SimState, receipt_type: str, cycle: int) -> Optional[dict]:
     """
-    Check for receipt type clustering (5+ consecutive same-type receipts).
+    Check for persistent clusters (duration >= CLUSTER_PERSISTENCE_THRESHOLD).
 
-    Tracks consecutive same-type receipts and emits cluster_receipt when
-    CLUSTER_THRESHOLD (5) is reached. Resets counter when type changes.
+    Tracks cluster duration and emits persistent_cluster_receipt when a cluster
+    persists for 15+ cycles. Simple comparison: duration >= threshold.
 
     Args:
         state: Current SimState (mutated in place)
         receipt_type: Type of current receipt
+        cycle: Current cycle number
 
     Returns:
-        Receipt dict if cluster detected, None otherwise
+        Receipt dict if persistent cluster detected, None otherwise
     """
     # Check if same type as last
     if receipt_type == state.last_receipt_type:
+        # Increment consecutive same type
         state.consecutive_same_type += 1
+        # Update current cluster duration
+        state.current_cluster_duration = cycle - state.cluster_start_cycle
     else:
-        # Type changed - check if previous run was a cluster
-        if state.consecutive_same_type >= CLUSTER_THRESHOLD:
-            # Emit cluster receipt for previous run
-            cluster_receipt = emit_receipt("cluster", {
+        # Type changed - check if previous cluster was persistent
+        persistent_receipt = None
+        if state.current_cluster_duration >= CLUSTER_PERSISTENCE_THRESHOLD:
+            # Emit persistent_cluster_receipt
+            state.persistent_clusters += 1
+            persistent_receipt = emit_receipt("persistent_cluster", {
                 "tenant_id": "simulation",
-                "cycle": state.cycle,
+                "cycle": cycle,
                 "receipt_type": state.last_receipt_type,
-                "cluster_size": state.consecutive_same_type,
-                "cluster_number": state.cluster_count + 1
+                "cluster_duration": state.current_cluster_duration,
+                "persistent_cluster_number": state.persistent_clusters
             })
-            state.cluster_count += 1
-            # Reset counter and update last type
-            state.consecutive_same_type = 1
-            state.last_receipt_type = receipt_type
-            return cluster_receipt
-        else:
-            # Not a cluster, just reset
-            state.consecutive_same_type = 1
-            state.last_receipt_type = receipt_type
+
+        # Reset: start new cluster
+        state.cluster_start_cycle = cycle
+        state.consecutive_same_type = 1
+        state.last_receipt_type = receipt_type
+        state.current_cluster_duration = 0
+
+        return persistent_receipt
+
+    return None
+
+
+def check_proto_form(state: SimState, cycle: int) -> Optional[dict]:
+    """
+    Check for proto-form detection (persistent clusters + symmetry breaks).
+
+    Proto-form = persistent_cluster EXISTS AND symmetry_breaks >= SYMMETRY_BREAK_THRESHOLD.
+    ONLY called at EVOLUTION_WINDOW intervals (every 500 cycles).
+
+    Args:
+        state: Current SimState (mutated in place)
+        cycle: Current cycle number
+
+    Returns:
+        Receipt dict if proto-form detected, None otherwise
+    """
+    # ONLY check at evolution window intervals
+    if cycle % EVOLUTION_WINDOW != 0:
+        return None
+
+    # Check if proto-form conditions are met
+    if state.persistent_clusters > 0 and state.symmetry_breaks >= SYMMETRY_BREAK_THRESHOLD:
+        # Check if not already active
+        if not state.proto_form_active:
+            # Activate proto-form
+            state.proto_form_active = True
+            state.proto_form_count += 1
+
+            # Emit proto_form receipt
+            return emit_receipt("proto_form", {
+                "tenant_id": "simulation",
+                "cycle": cycle,
+                "persistent_clusters": state.persistent_clusters,
+                "symmetry_breaks": state.symmetry_breaks,
+                "proto_form_number": state.proto_form_count
+            })
+    else:
+        # Conditions not met - deactivate
+        state.proto_form_active = False
 
     return None
 
