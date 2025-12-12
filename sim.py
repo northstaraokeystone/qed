@@ -85,6 +85,23 @@ RESONANCE_PEAK_THRESHOLD = 0.25  # boost level for peak detection
 STRUCTURE_THRESHOLD = 10         # clusters needed for structure formation
 MAX_RESONANCE_AMPLIFICATION = 2.0  # cap on resonance boost
 
+# Quantum Nucleation constants (active seeding)
+N_SEEDS = 3
+SEED_PHASES = [0.0, 2.094, 4.189]  # 0, 2π/3, 4π/3
+SEED_RESONANCE_AFFINITY = [0.7, 0.5, 0.6]
+SEED_DIRECTION = [1, -1, 1]
+ATTRACTION_RADIUS = 1.571  # π/2
+BASE_ATTRACTION_STRENGTH = 0.3
+BEACON_GROWTH_FACTOR = 0.1
+CAPTURE_THRESHOLD = 0.6
+TRANSFORM_STRENGTH = 0.3
+EVOLUTION_RATE = 0.1
+EVOLUTION_WINDOW_SEEDS = 50  # Different from EVOLUTION_WINDOW to avoid confusion
+CRYSTALLIZATION_SIZE = 15
+COHERENCE_THRESHOLD = 0.8
+CRYSTALLIZED_BEACON_BOOST = 2.0
+TUNNELING_THRESHOLD = 0.9
+
 # Module exports for receipt types
 RECEIPT_SCHEMA = [
     "sim_config", "sim_cycle", "sim_birth", "sim_death",
@@ -97,6 +114,39 @@ class PatternState(Enum):
     SUPERPOSITION = "SUPERPOSITION"  # Dormant potential
     VIRTUAL = "VIRTUAL"  # Brief existence, needs re-observation to survive
     ACTIVE = "ACTIVE"  # Fully materialized
+
+# =============================================================================
+# QUANTUM NUCLEATION DATACLASSES
+# =============================================================================
+
+@dataclass
+class Seed:
+    """Quantum seed that broadcasts to attract kicks."""
+    seed_id: int
+    phase: float  # radians, 0 to 2π
+    resonance_affinity: float  # 0 to 1, preference for resonant kicks
+    direction: int  # +1 or -1
+    captures: int = 0  # successful captures
+
+@dataclass
+class Beacon:
+    """Broadcast signal from seed."""
+    seed_id: int
+    strength: float  # attraction strength
+
+@dataclass
+class Counselor:
+    """Agent that competes to capture kicks."""
+    counselor_id: int
+    seed_id: int  # which seed this counselor represents
+
+@dataclass
+class Crystal:
+    """Solidified structure formed from captured kicks."""
+    crystal_id: int
+    seed_id: int
+    members: list = field(default_factory=list)  # captured kick receipts
+    coherence: float = 0.0
 
 # =============================================================================
 # DATACLASSES (3 required)
@@ -188,6 +238,13 @@ class SimState:
     persistent_clusters: int = 0  # clusters that lasted 15+ cycles
     proto_form_count: int = 0  # proto-structures detected
     proto_form_active: bool = False  # is a proto-form currently active
+    # Quantum nucleation fields (active seeding)
+    seeds: List[Seed] = field(default_factory=list)  # quantum seeds
+    beacons: List[Beacon] = field(default_factory=list)  # broadcast signals
+    counselors: List[Counselor] = field(default_factory=list)  # capturing agents
+    crystals: List[Crystal] = field(default_factory=list)  # solidified structures
+    total_captures: int = 0  # total kicks captured across all seeds
+    crystals_formed: int = 0  # number of crystals that reached threshold
 
 
 @dataclass(frozen=True)
@@ -238,7 +295,10 @@ def run_multiverse(n_universes: int, n_cycles: int, base_seed: int = 42) -> dict
         "structure_formed_count": 0,
         "total_persistent_clusters": 0,
         "total_proto_forms": 0,
-        "total_symmetry_breaks": 0
+        "total_symmetry_breaks": 0,
+        "total_captures": 0,
+        "total_crystals_formed": 0,
+        "universes_crystallized": 0
     }
 
     for i in range(n_universes):
@@ -263,7 +323,9 @@ def run_multiverse(n_universes: int, n_cycles: int, base_seed: int = 42) -> dict
             "persistent_clusters": result.final_state.persistent_clusters,
             "proto_forms": result.final_state.proto_form_count,
             "symmetry_breaks": result.final_state.symmetry_breaks,
-            "structure_formed": result.final_state.structure_formed
+            "structure_formed": result.final_state.structure_formed,
+            "captures": result.final_state.total_captures,
+            "crystals_formed": result.final_state.crystals_formed
         })
 
         # Aggregate statistics
@@ -274,10 +336,14 @@ def run_multiverse(n_universes: int, n_cycles: int, base_seed: int = 42) -> dict
         aggregated_stats["total_persistent_clusters"] += result.final_state.persistent_clusters
         aggregated_stats["total_proto_forms"] += result.final_state.proto_form_count
         aggregated_stats["total_symmetry_breaks"] += result.final_state.symmetry_breaks
+        aggregated_stats["total_captures"] += result.final_state.total_captures
+        aggregated_stats["total_crystals_formed"] += result.final_state.crystals_formed
         if result.statistics["completeness_achieved"]:
             aggregated_stats["completeness_achieved_count"] += 1
         if result.final_state.structure_formed:
             aggregated_stats["structure_formed_count"] += 1
+        if result.final_state.crystals_formed > 0:
+            aggregated_stats["universes_crystallized"] += 1
 
     # Compute averages
     aggregated_stats["avg_births"] = aggregated_stats["total_births"] / n_universes
@@ -286,6 +352,8 @@ def run_multiverse(n_universes: int, n_cycles: int, base_seed: int = 42) -> dict
     aggregated_stats["avg_persistent_clusters"] = aggregated_stats["total_persistent_clusters"] / n_universes
     aggregated_stats["avg_proto_forms"] = aggregated_stats["total_proto_forms"] / n_universes
     aggregated_stats["avg_symmetry_breaks"] = aggregated_stats["total_symmetry_breaks"] / n_universes
+    aggregated_stats["avg_captures"] = aggregated_stats["total_captures"] / n_universes
+    aggregated_stats["avg_crystals_formed"] = aggregated_stats["total_crystals_formed"] / n_universes
 
     # Emit multiverse_complete receipt
     complete_receipt = emit_receipt("multiverse_complete", {
@@ -438,6 +506,9 @@ def initialize_state(config: SimConfig) -> SimState:
     state.H_genesis = H_genesis
     state.H_previous = H_genesis
 
+    # Initialize quantum nucleation system
+    initialize_nucleation(state)
+
     return state
 
 
@@ -580,6 +651,22 @@ def simulate_cycle(state: SimState, config: SimConfig) -> List[dict]:
         if persistent_cluster_receipt:
             state.receipt_ledger.append(persistent_cluster_receipt)
 
+        # QUANTUM NUCLEATION: Counselors compete to capture the kick
+        kick_phase = perturbation_receipt.get("phase", 0.0)
+        kick_resonant = perturbation_receipt.get("resonance_hit", False)
+        kick_direction = perturbation_receipt.get("bias_direction", 1)
+
+        winner = counselor_compete(state, perturbation_receipt, kick_phase, kick_resonant, kick_direction)
+        if winner:
+            seed_id, similarity = winner
+            capture_receipt = counselor_capture(state, seed_id, perturbation_receipt, similarity, state.cycle)
+            state.receipt_ledger.append(capture_receipt)
+
+            # Check for crystallization after capture
+            crystallization_receipt = check_crystallization(state, state.cycle)
+            if crystallization_receipt:
+                state.receipt_ledger.append(crystallization_receipt)
+
     # Resonance peak check (after perturbation)
     resonance_peak_receipt = check_resonance_peak(state, state.cycle)
     if resonance_peak_receipt:
@@ -618,6 +705,9 @@ def simulate_cycle(state: SimState, config: SimConfig) -> List[dict]:
     proto_form_receipt = check_proto_form(state, state.cycle)
     if proto_form_receipt:
         state.receipt_ledger.append(proto_form_receipt)
+
+    # QUANTUM NUCLEATION: Evolve seeds (adaptive learning)
+    evolve_seeds(state, state.cycle)
 
     # Effective criticality for threshold checks
     effective_crit = criticality + state.perturbation_boost
@@ -1682,6 +1772,278 @@ def check_symmetry_break(state: SimState, receipts: list, cycle: int) -> Optiona
         state.last_symmetry_metric = entropy
 
     return None
+
+
+# =============================================================================
+# QUANTUM NUCLEATION FUNCTIONS (active seeding)
+# =============================================================================
+
+
+def initialize_nucleation(state: SimState) -> None:
+    """
+    Initialize quantum nucleation system with seeds, beacons, counselors, and crystals.
+
+    Creates N_SEEDS quantum seeds at specific phases (0, 2π/3, 4π/3),
+    each with a beacon, counselor, and empty crystal.
+
+    Args:
+        state: Current SimState (mutated in place)
+    """
+    import math
+
+    # Create seeds
+    for i in range(N_SEEDS):
+        seed = Seed(
+            seed_id=i,
+            phase=SEED_PHASES[i],
+            resonance_affinity=SEED_RESONANCE_AFFINITY[i],
+            direction=SEED_DIRECTION[i],
+            captures=0
+        )
+        state.seeds.append(seed)
+
+        # Create beacon for this seed
+        beacon = Beacon(
+            seed_id=i,
+            strength=BASE_ATTRACTION_STRENGTH
+        )
+        state.beacons.append(beacon)
+
+        # Create counselor for this seed
+        counselor = Counselor(
+            counselor_id=i,
+            seed_id=i
+        )
+        state.counselors.append(counselor)
+
+        # Create empty crystal for this seed
+        crystal = Crystal(
+            crystal_id=i,
+            seed_id=i,
+            members=[],
+            coherence=0.0
+        )
+        state.crystals.append(crystal)
+
+
+def counselor_score(counselor: Counselor, seed: Seed, kick_phase: float,
+                    kick_resonant: bool, kick_direction: int) -> float:
+    """
+    Calculate similarity score between counselor's seed and a kick.
+
+    Similarity = phase_score * resonance_score * direction_score
+
+    Args:
+        counselor: Counselor agent
+        seed: Seed associated with counselor
+        kick_phase: Phase of the kick (radians)
+        kick_resonant: Whether kick is resonant
+        kick_direction: Direction of kick (+1 or -1)
+
+    Returns:
+        float: Similarity score (0 to 1)
+    """
+    import math
+
+    # Phase score: cos(phase_diff), normalized to 0-1
+    phase_diff = abs(kick_phase - seed.phase)
+    phase_score = (math.cos(phase_diff) + 1.0) / 2.0  # cos ranges -1 to +1, normalize to 0-1
+
+    # Resonance score: match seed's affinity
+    if kick_resonant:
+        resonance_score = seed.resonance_affinity
+    else:
+        resonance_score = 1.0 - seed.resonance_affinity
+
+    # Direction score: match seed's direction
+    if kick_direction == seed.direction:
+        direction_score = 1.0
+    else:
+        direction_score = 0.5  # partial match for opposite direction
+
+    # Combined similarity
+    similarity = phase_score * resonance_score * direction_score
+
+    return similarity
+
+
+def counselor_compete(state: SimState, kick_receipt: dict, kick_phase: float,
+                     kick_resonant: bool, kick_direction: int) -> Optional[tuple]:
+    """
+    Counselors compete to capture a kick. Best match wins.
+
+    Args:
+        state: Current SimState
+        kick_receipt: Kick receipt (perturbation receipt)
+        kick_phase: Phase of the kick
+        kick_resonant: Whether kick is resonant
+        kick_direction: Direction of kick
+
+    Returns:
+        Optional[tuple]: (seed_id, similarity) if winner found, None otherwise
+    """
+    best_seed_id = None
+    best_similarity = 0.0
+
+    for counselor in state.counselors:
+        seed = state.seeds[counselor.seed_id]
+        similarity = counselor_score(counselor, seed, kick_phase, kick_resonant, kick_direction)
+
+        if similarity > best_similarity:
+            best_similarity = similarity
+            best_seed_id = counselor.seed_id
+
+    # Check if best similarity meets capture threshold
+    if best_similarity >= CAPTURE_THRESHOLD:
+        return (best_seed_id, best_similarity)
+
+    return None
+
+
+def counselor_capture(state: SimState, seed_id: int, kick_receipt: dict,
+                     similarity: float, cycle: int) -> dict:
+    """
+    Capture a kick and transform it into a crystal member.
+
+    Args:
+        state: Current SimState (mutated in place)
+        seed_id: ID of seed that won the capture
+        kick_receipt: Kick receipt to capture
+        similarity: Similarity score from competition
+        cycle: Current cycle number
+
+    Returns:
+        Capture receipt dict
+    """
+    # Get seed and crystal
+    seed = state.seeds[seed_id]
+    crystal = state.crystals[seed_id]
+
+    # Check for tunneling (very high similarity)
+    tunneled = similarity >= TUNNELING_THRESHOLD
+
+    # Transform kick (apply transformation strength)
+    transformed = random.random() < TRANSFORM_STRENGTH
+
+    # Add to crystal members
+    crystal.members.append(kick_receipt)
+
+    # Update seed captures
+    seed.captures += 1
+    state.total_captures += 1
+
+    # Compute crystal coherence (average of phase alignment)
+    import math
+    if len(crystal.members) > 1:
+        # Compute coherence as phase alignment
+        phases = []
+        for member in crystal.members:
+            phases.append(member.get("phase", 0.0))
+
+        # Coherence = 1 - variance/π² (normalized phase variance)
+        mean_phase = sum(phases) / len(phases)
+        variance = sum((p - mean_phase) ** 2 for p in phases) / len(phases)
+        crystal.coherence = max(0.0, 1.0 - variance / (math.pi ** 2))
+    else:
+        crystal.coherence = 1.0  # Single member = perfect coherence
+
+    # Emit capture receipt
+    return emit_receipt("capture", {
+        "tenant_id": "simulation",
+        "cycle": cycle,
+        "seed_id": seed_id,
+        "similarity": similarity,
+        "tunneled": tunneled,
+        "transformed": transformed,
+        "crystal_size": len(crystal.members),
+        "coherence": crystal.coherence
+    })
+
+
+def check_crystallization(state: SimState, cycle: int) -> Optional[dict]:
+    """
+    Check if any crystal has reached crystallization threshold.
+
+    Crystallization occurs when:
+    - Crystal size >= CRYSTALLIZATION_SIZE (15)
+    - Crystal coherence >= COHERENCE_THRESHOLD (0.8)
+
+    First crystal to crystallize boosts all beacons by CRYSTALLIZED_BEACON_BOOST (2x).
+
+    Args:
+        state: Current SimState (mutated in place)
+        cycle: Current cycle number
+
+    Returns:
+        Crystallization receipt if any crystal crystallized, None otherwise
+    """
+    for crystal in state.crystals:
+        # Check if already counted
+        if len(crystal.members) >= CRYSTALLIZATION_SIZE and crystal.coherence >= COHERENCE_THRESHOLD:
+            # Check if this is a new crystallization (not already counted)
+            # We track by checking if we've emitted a crystallization receipt for this seed
+            already_crystallized = any(
+                r.get("receipt_type") == "crystallization" and r.get("seed_id") == crystal.seed_id
+                for r in state.receipt_ledger
+            )
+
+            if not already_crystallized:
+                state.crystals_formed += 1
+
+                # Boost beacons if this is the FIRST crystal
+                if state.crystals_formed == 1:
+                    for beacon in state.beacons:
+                        beacon.strength *= CRYSTALLIZED_BEACON_BOOST
+
+                # Emit crystallization receipt
+                return emit_receipt("crystallization", {
+                    "tenant_id": "simulation",
+                    "cycle": cycle,
+                    "seed_id": crystal.seed_id,
+                    "size": len(crystal.members),
+                    "coherence": crystal.coherence,
+                    "first_crystal": state.crystals_formed == 1
+                })
+
+    return None
+
+
+def evolve_seeds(state: SimState, cycle: int) -> None:
+    """
+    Evolve seeds toward successful captures.
+
+    Seeds learn what works by adjusting their phase, affinity, and direction
+    based on capture success rate.
+
+    Only called every EVOLUTION_WINDOW_SEEDS cycles.
+
+    Args:
+        state: Current SimState (mutated in place)
+        cycle: Current cycle number
+    """
+    # Only evolve at window intervals
+    if cycle % EVOLUTION_WINDOW_SEEDS != 0 or cycle == 0:
+        return
+
+    for seed in state.seeds:
+        # If seed has captures, evolve toward success
+        if seed.captures > 0:
+            # Slightly adjust phase toward recent captures (random walk)
+            phase_delta = random.gauss(0, 0.1) * EVOLUTION_RATE
+            seed.phase += phase_delta
+
+            # Keep phase in [0, 2π]
+            import math
+            seed.phase = seed.phase % (2 * math.pi)
+
+            # Adjust affinity based on success
+            crystal = state.crystals[seed.seed_id]
+            if crystal.coherence > COHERENCE_THRESHOLD:
+                # Success - increase affinity slightly
+                seed.resonance_affinity = min(1.0, seed.resonance_affinity + EVOLUTION_RATE * 0.5)
+            else:
+                # Not coherent - decrease affinity slightly
+                seed.resonance_affinity = max(0.0, seed.resonance_affinity - EVOLUTION_RATE * 0.5)
 
 
 # =============================================================================
