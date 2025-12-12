@@ -97,8 +97,10 @@ CAPTURE_THRESHOLD = 0.6
 TRANSFORM_STRENGTH = 0.3
 EVOLUTION_RATE = 0.1
 EVOLUTION_WINDOW_SEEDS = 50  # Different from EVOLUTION_WINDOW to avoid confusion
-CRYSTALLIZATION_SIZE = 15
-COHERENCE_THRESHOLD = 0.8
+# Autocatalytic crystallization constants (replaces size/coherence thresholds)
+AUTOCATALYSIS_STREAK = 3  # consecutive self-predictions needed for birth
+SELF_PREDICTION_THRESHOLD = 0.85  # similarity that counts as "predicted"
+SEED_ARCHETYPES = ["HUNTER", "SHEPHERD", "ARCHITECT"]  # v12 agent archetypes
 CRYSTALLIZED_BEACON_BOOST = 2.0
 TUNNELING_THRESHOLD = 0.9
 
@@ -127,6 +129,7 @@ class Seed:
     resonance_affinity: float  # 0 to 1, preference for resonant kicks
     direction: int  # +1 or -1
     captures: int = 0  # successful captures
+    agent_archetype: str = ""  # HUNTER, SHEPHERD, or ARCHITECT
 
 @dataclass
 class Beacon:
@@ -147,6 +150,9 @@ class Crystal:
     seed_id: int
     members: list = field(default_factory=list)  # captured kick receipts
     coherence: float = 0.0
+    crystallized: bool = False  # True when autocatalysis achieved
+    birth_cycle: int = -1  # cycle when autocatalysis achieved, -1 = not born
+    agent_type: str = ""  # set on crystallization, matches seed archetype
 
 # =============================================================================
 # DATACLASSES (3 required)
@@ -1786,14 +1792,15 @@ def initialize_nucleation(state: SimState) -> None:
     """
     import math
 
-    # Create seeds
+    # Create seeds with agent archetypes
     for i in range(N_SEEDS):
         seed = Seed(
             seed_id=i,
             phase=SEED_PHASES[i],
             resonance_affinity=SEED_RESONANCE_AFFINITY[i],
             direction=SEED_DIRECTION[i],
-            captures=0
+            captures=0,
+            agent_archetype=SEED_ARCHETYPES[i]  # HUNTER, SHEPHERD, ARCHITECT
         )
         state.seeds.append(seed)
 
@@ -1920,8 +1927,9 @@ def counselor_capture(state: SimState, seed_id: int, kick_receipt: dict,
     # Transform kick (apply transformation strength)
     transformed = random.random() < TRANSFORM_STRENGTH
 
-    # Add to crystal members
-    crystal.members.append(kick_receipt)
+    # Add to crystal members with similarity for autocatalysis tracking
+    member = {**kick_receipt, "capture_similarity": similarity}
+    crystal.members.append(member)
 
     # Update seed captures
     seed.captures += 1
@@ -1957,11 +1965,14 @@ def counselor_capture(state: SimState, seed_id: int, kick_receipt: dict,
 
 def check_crystallization(state: SimState, cycle: int) -> Optional[dict]:
     """
-    Check if any crystal has reached crystallization threshold.
+    Check if any crystal has achieved autocatalysis (birth).
 
-    Crystallization occurs when:
-    - Crystal size >= CRYSTALLIZATION_SIZE (15)
-    - Crystal coherence >= COHERENCE_THRESHOLD (0.8)
+    Autocatalytic crystallization occurs when the last AUTOCATALYSIS_STREAK captures
+    all have similarity >= SELF_PREDICTION_THRESHOLD. Pattern predicts itself = alive.
+
+    This replaces arbitrary size/coherence thresholds with self-recognition:
+    - 3 consecutive self-predictions (similarity >= 0.85) = autocatalysis
+    - Crystal is ALIVE when it predicts itself
 
     First crystal to crystallize boosts all beacons by CRYSTALLIZED_BEACON_BOOST (2x).
 
@@ -1970,35 +1981,55 @@ def check_crystallization(state: SimState, cycle: int) -> Optional[dict]:
         cycle: Current cycle number
 
     Returns:
-        Crystallization receipt if any crystal crystallized, None otherwise
+        agent_birth receipt if any crystal achieved autocatalysis, None otherwise
     """
     for crystal in state.crystals:
-        # Check if already counted
-        if len(crystal.members) >= CRYSTALLIZATION_SIZE and crystal.coherence >= COHERENCE_THRESHOLD:
-            # Check if this is a new crystallization (not already counted)
-            # We track by checking if we've emitted a crystallization receipt for this seed
-            already_crystallized = any(
-                r.get("receipt_type") == "crystallization" and r.get("seed_id") == crystal.seed_id
-                for r in state.receipt_ledger
-            )
+        # Skip if already crystallized
+        if crystal.crystallized:
+            continue
 
-            if not already_crystallized:
-                state.crystals_formed += 1
+        # Need at least AUTOCATALYSIS_STREAK members to check
+        if len(crystal.members) < AUTOCATALYSIS_STREAK:
+            continue
 
-                # Boost beacons if this is the FIRST crystal
-                if state.crystals_formed == 1:
-                    for beacon in state.beacons:
-                        beacon.strength *= CRYSTALLIZED_BEACON_BOOST
+        # Check last AUTOCATALYSIS_STREAK captures for self-prediction
+        recent_members = crystal.members[-AUTOCATALYSIS_STREAK:]
+        high_similarity_count = sum(
+            1 for m in recent_members
+            if m.get("capture_similarity", 0.0) >= SELF_PREDICTION_THRESHOLD
+        )
 
-                # Emit crystallization receipt
-                return emit_receipt("crystallization", {
-                    "tenant_id": "simulation",
-                    "cycle": cycle,
-                    "seed_id": crystal.seed_id,
-                    "size": len(crystal.members),
-                    "coherence": crystal.coherence,
-                    "first_crystal": state.crystals_formed == 1
-                })
+        # Autocatalysis achieved: pattern predicts itself AUTOCATALYSIS_STREAK times
+        if high_similarity_count >= AUTOCATALYSIS_STREAK:
+            # Get seed for archetype
+            seed = state.seeds[crystal.seed_id]
+
+            # Mark crystal as alive
+            crystal.crystallized = True
+            crystal.birth_cycle = cycle
+            crystal.agent_type = seed.agent_archetype
+
+            state.crystals_formed += 1
+
+            # Boost beacons if this is the FIRST crystal
+            if state.crystals_formed == 1:
+                for beacon in state.beacons:
+                    beacon.strength *= CRYSTALLIZED_BEACON_BOOST
+
+            # Emit agent_birth receipt (LAW_1: no receipt → not real)
+            return emit_receipt("agent_birth", {
+                "tenant_id": "simulation",
+                "receipt_type": "agent_birth",
+                "agent_type": crystal.agent_type,
+                "archetype": seed.agent_archetype,
+                "birth_cycle": cycle,
+                "pattern_size": len(crystal.members),
+                "autocatalysis_streak": AUTOCATALYSIS_STREAK,
+                "parent_seed_id": seed.seed_id,
+                "seed_id": crystal.seed_id,
+                "coherence": crystal.coherence,
+                "first_crystal": state.crystals_formed == 1
+            })
 
     return None
 
@@ -2031,13 +2062,13 @@ def evolve_seeds(state: SimState, cycle: int) -> None:
             import math
             seed.phase = seed.phase % (2 * math.pi)
 
-            # Adjust affinity based on success
+            # Adjust affinity based on autocatalysis success
             crystal = state.crystals[seed.seed_id]
-            if crystal.coherence > COHERENCE_THRESHOLD:
-                # Success - increase affinity slightly
+            if crystal.crystallized:
+                # Crystal is ALIVE - increase affinity slightly
                 seed.resonance_affinity = min(1.0, seed.resonance_affinity + EVOLUTION_RATE * 0.5)
             else:
-                # Not coherent - decrease affinity slightly
+                # Not yet autocatalytic - decrease affinity slightly
                 seed.resonance_affinity = max(0.0, seed.resonance_affinity - EVOLUTION_RATE * 0.5)
 
 
