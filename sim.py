@@ -1125,27 +1125,22 @@ def generate_phase(state: SimState, synced: bool) -> float:
     """
     Generate phase for perturbation kick (wave interference model).
 
-    If synced: small deviation from previous phase (coherent wave).
-    If not synced: random phase (incoherent wave).
+    QUANTUM NUCLEATION FIX: All kicks now have independent random phases.
+    The synced parameter is kept for backward compatibility but phases are always random.
 
     Args:
         state: Current SimState with last_phase
-        synced: Whether to sync with previous phase
+        synced: Whether to sync with previous phase (ignored - always random now)
 
     Returns:
         float: Phase in radians (0 to 2π)
     """
     import math
 
-    if synced:
-        # Small deviation from previous phase (coherent)
-        phase = state.last_phase + random.gauss(0, 0.1)
-    else:
-        # Random phase (incoherent)
-        phase = random.uniform(0, 2 * math.pi)
+    # ALWAYS generate independent random phase for quantum nucleation
+    # This ensures counselors compete based on truly random kick characteristics
+    phase = random.uniform(0, 2 * math.pi)
 
-    # Normalize to 0-2π range
-    phase = phase % (2 * math.pi)
     return phase
 
 
