@@ -51,10 +51,10 @@ CRITICALITY_PHASE_TRANSITION = 1.0  # The quantum leap point
 ALERT_COOLDOWN_CYCLES = 50  # Prevent alert spam near threshold
 
 # Perturbation constants (stochastic GW kicks)
-PERTURBATION_PROBABILITY = 0.2   # 20% chance per cycle (more frequent events)
-PERTURBATION_MAGNITUDE = 0.12    # size of kick (stronger kicks)
-PERTURBATION_DECAY = 0.6         # kick decays 40% per cycle (base decay before non-linear factor)
-PERTURBATION_VARIANCE = 0.35     # chaotic variance in magnitude (amplified chaos)
+PERTURBATION_PROBABILITY = 0.25  # 25% chance per cycle (more frequent events)
+PERTURBATION_MAGNITUDE = 0.15    # size of kick (stronger kicks)
+PERTURBATION_DECAY = 0.55        # kick decays 45% per cycle (base decay before non-linear factor)
+PERTURBATION_VARIANCE = 0.4      # chaotic variance in magnitude (amplified chaos)
 BASIN_ESCAPE_THRESHOLD = 0.2     # escape detection threshold (higher bar)
 CLUSTER_LAMBDA = 3               # Poisson parameter for cluster size (avg 3 kicks per event)
 MAX_CLUSTER_SIZE = 5             # Safety cap on cluster size (prevent explosion)
@@ -65,8 +65,8 @@ EVOLUTION_WINDOW = 500           # cycles between evolution snapshots
 MAX_MAGNITUDE_FACTOR = 3.0       # cap on magnitude multiplier (prevent explosion)
 
 # Adaptive feedback constants (threshold-based state changes)
-ADAPTIVE_THRESHOLD = 0.25        # triggers probability boost when boost > threshold
-SYNC_BOOST = 0.1                 # probability increase amount for synced kicks (replaces ADAPTIVE_BOOST)
+ADAPTIVE_THRESHOLD = 0.3         # triggers probability boost when boost > threshold
+SYNC_BOOST = 0.15                # probability increase amount for synced kicks (replaces ADAPTIVE_BOOST)
 MAX_PROBABILITY = 0.5            # cap to prevent runaway
 
 # Phase synchronization constants (wave interference)
@@ -74,6 +74,13 @@ PHASE_SYNC_PROBABILITY = 0.4     # 40% chance kick syncs with previous
 PHASE_SYNC_WINDOW = 3.14159 / 4  # ~45° window for sync detection (π/4 radians)
 CLUSTER_THRESHOLD = 5            # minimum consecutive same-type receipts for cluster
 SYMMETRY_SAMPLE_SIZE = 100       # only check last N receipts for symmetry (performance optimization)
+
+# Resonance amplification constants
+RESONANCE_PROBABILITY = 0.5      # 50% chance kick resonates
+INTERFERENCE_AMPLITUDE = 0.15    # interference strength multiplier
+RESONANCE_PEAK_THRESHOLD = 0.25  # boost level for peak detection
+STRUCTURE_THRESHOLD = 10         # clusters needed for structure formation
+MAX_RESONANCE_AMPLIFICATION = 2.0  # cap on resonance boost
 
 # Module exports for receipt types
 RECEIPT_SCHEMA = [
@@ -163,6 +170,14 @@ class SimState:
     consecutive_same_type: int = 0  # for cluster detection
     last_receipt_type: str = ""  # for cluster detection
     last_symmetry_metric: float = 0.0  # for symmetry break detection
+    # Resonance tracking fields
+    resonance_peaks: int = 0  # peaks detected
+    resonance_hits: int = 0  # times resonance triggered
+    structure_formed: bool = False  # structure emerged
+    structure_formation_cycle: int = 0  # when structure formed
+    baseline_boost: float = 0.0  # running average of boost
+    baseline_shifts: int = 0  # number of significant shifts
+    initial_baseline: float = 0.0  # baseline at start
 
 
 @dataclass(frozen=True)
@@ -454,6 +469,16 @@ def simulate_cycle(state: SimState, config: SimConfig) -> List[dict]:
         if cluster_receipt:
             state.receipt_ledger.append(cluster_receipt)
 
+    # Resonance peak check (after perturbation)
+    resonance_peak_receipt = check_resonance_peak(state, state.cycle)
+    if resonance_peak_receipt:
+        state.receipt_ledger.append(resonance_peak_receipt)
+
+    # Structure formation check (after cluster detection)
+    structure_formation_receipt = check_structure_formation(state, state.cycle)
+    if structure_formation_receipt:
+        state.receipt_ledger.append(structure_formation_receipt)
+
     # Basin escape check
     basin_escape_receipt = check_basin_escape(state, state.cycle)
     if basin_escape_receipt:
@@ -467,6 +492,11 @@ def simulate_cycle(state: SimState, config: SimConfig) -> List[dict]:
     evolution_receipt = check_evolution_window(state, state.cycle)
     if evolution_receipt:
         state.receipt_ledger.append(evolution_receipt)
+
+    # Baseline shift tracking (ONLY at evolution window intervals)
+    baseline_shift_receipt = track_baseline_shift(state, state.cycle)
+    if baseline_shift_receipt:
+        state.receipt_ledger.append(baseline_shift_receipt)
 
     # Symmetry break check (ONLY at evolution window intervals for performance)
     symmetry_break_receipt = check_symmetry_break(state, state.receipt_ledger, state.cycle)
@@ -999,6 +1029,31 @@ def compute_effective_probability(state: SimState, synced: bool) -> float:
     return effective_prob
 
 
+def check_resonance(state: SimState) -> tuple[bool, float]:
+    """
+    Check if perturbation kick resonates.
+
+    Resonance probability: RESONANCE_PROBABILITY chance of resonating.
+    Resonance factor: 1 + INTERFERENCE_AMPLITUDE (amplification).
+    Capped at MAX_RESONANCE_AMPLIFICATION.
+
+    Args:
+        state: Current SimState
+
+    Returns:
+        Tuple of (resonance_hit: bool, resonance_factor: float)
+    """
+    if random.random() < RESONANCE_PROBABILITY:
+        # Resonance hit - amplify by INTERFERENCE_AMPLITUDE
+        resonance_factor = 1.0 + INTERFERENCE_AMPLITUDE
+        # Cap at MAX_RESONANCE_AMPLIFICATION
+        resonance_factor = min(resonance_factor, MAX_RESONANCE_AMPLIFICATION)
+        return (True, resonance_factor)
+    else:
+        # No resonance
+        return (False, 1.0)
+
+
 def check_perturbation(state: SimState, cycle: int) -> Optional[dict]:
     """
     Stochastic GW kick with phase interference, Poisson clusters, adaptive feedback, and quantum variance.
@@ -1030,6 +1085,11 @@ def check_perturbation(state: SimState, cycle: int) -> Optional[dict]:
 
     # Compute interference factor
     interference = compute_interference(phase, state.last_phase)
+
+    # Check resonance
+    resonance_hit, resonance_factor = check_resonance(state)
+    if resonance_hit:
+        state.resonance_hits += 1
 
     # Get effective probability (with adaptive feedback and phase sync)
     effective_prob = compute_effective_probability(state, synced)
@@ -1065,10 +1125,12 @@ def check_perturbation(state: SimState, cycle: int) -> Optional[dict]:
             # Apply interference: effective_mag = actual_mag * (1 + 0.5 * interference)
             # Interference ranges -1 to +1, so multiplier ranges 0.5 to 1.5
             effective_mag = actual_mag * (1.0 + 0.5 * interference)
+            # Apply resonance amplification
+            final_mag = effective_mag * resonance_factor
             # Clamp to positive minimum
-            effective_mag = max(0.01, effective_mag)
-            state.perturbation_boost += effective_mag
-            total_added += effective_mag
+            final_mag = max(0.01, final_mag)
+            state.perturbation_boost += final_mag
+            total_added += final_mag
 
         # Update state for next kick
         state.last_phase = phase
@@ -1100,6 +1162,8 @@ def check_perturbation(state: SimState, cycle: int) -> Optional[dict]:
             "synced": synced,
             "interference_factor": interference,
             "interference_type": interference_type,
+            "resonance_hit": resonance_hit,
+            "resonance_factor": resonance_factor,
             "source": "gravitational_wave_cluster_quantum_interference"
         }
     return None
@@ -1156,6 +1220,102 @@ def compute_escape_probability(state: SimState, cycle: int) -> float:
         float: Escape probability (escape_count / cycle)
     """
     return state.escape_count / max(cycle, 1)
+
+
+def check_resonance_peak(state: SimState, cycle: int) -> Optional[dict]:
+    """
+    Check if perturbation boost has reached resonance peak threshold.
+
+    Peak detection: boost > RESONANCE_PEAK_THRESHOLD triggers peak receipt.
+    Increments state.resonance_peaks counter.
+
+    Args:
+        state: Current SimState (mutated in place if peak detected)
+        cycle: Current cycle number
+
+    Returns:
+        Receipt dict if peak detected, None otherwise
+    """
+    if state.perturbation_boost > RESONANCE_PEAK_THRESHOLD:
+        # Increment peak counter
+        state.resonance_peaks += 1
+
+        return {
+            "receipt_type": "resonance_peak",
+            "cycle": cycle,
+            "boost": state.perturbation_boost,
+            "peak_count": state.resonance_peaks
+        }
+    return None
+
+
+def check_structure_formation(state: SimState, cycle: int) -> Optional[dict]:
+    """
+    Check if structure has formed via cluster detection.
+
+    Structure formation: cluster_count >= STRUCTURE_THRESHOLD.
+    Only emits receipt once (first time structure forms).
+
+    Args:
+        state: Current SimState (mutated in place if structure forms)
+        cycle: Current cycle number
+
+    Returns:
+        Receipt dict if structure formed, None otherwise
+    """
+    if state.cluster_count >= STRUCTURE_THRESHOLD and not state.structure_formed:
+        # Mark structure as formed
+        state.structure_formed = True
+        state.structure_formation_cycle = cycle
+
+        return {
+            "receipt_type": "structure_formation",
+            "cycle": cycle,
+            "cluster_count": state.cluster_count
+        }
+    return None
+
+
+def track_baseline_shift(state: SimState, cycle: int) -> Optional[dict]:
+    """
+    Track baseline shift via exponential moving average.
+
+    ONLY called at EVOLUTION_WINDOW intervals (every 500 cycles).
+    Updates baseline_boost with EMA: 0.9 * old + 0.1 * current.
+    Detects shift when abs(current - initial) > 0.05.
+
+    Args:
+        state: Current SimState (mutated in place)
+        cycle: Current cycle number
+
+    Returns:
+        Receipt dict if baseline shift detected, None otherwise
+    """
+    # ONLY check at evolution window intervals
+    if cycle % EVOLUTION_WINDOW != 0:
+        return None
+
+    # Update baseline with exponential moving average
+    state.baseline_boost = 0.9 * state.baseline_boost + 0.1 * state.perturbation_boost
+
+    # Set initial baseline at first window (cycle 500)
+    if cycle == EVOLUTION_WINDOW:
+        state.initial_baseline = state.baseline_boost
+
+    # Check for significant shift
+    if abs(state.baseline_boost - state.initial_baseline) > 0.05:
+        # Increment shift counter
+        state.baseline_shifts += 1
+
+        return {
+            "receipt_type": "baseline_shift",
+            "cycle": cycle,
+            "initial": state.initial_baseline,
+            "current": state.baseline_boost,
+            "shift": state.baseline_boost - state.initial_baseline
+        }
+
+    return None
 
 
 def check_evolution_window(state: SimState, cycle: int) -> Optional[dict]:
