@@ -17,6 +17,8 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 from enum import Enum
 
+import numpy as np
+
 from entropy import system_entropy, agent_fitness, emit_receipt, dual_hash
 from autocatalysis import autocatalysis_check, coherence_score, is_alive
 from architect import identify_automation_gaps, synthesize_blueprint, propose_agent
@@ -507,6 +509,551 @@ def run_simulation(config: SimConfig) -> SimResult:
         statistics=statistics,
         config=config
     )
+
+
+def run_simulation_sparse(config: SimConfig) -> SimResult:
+    """
+    Sparse vectorized simulation - identical results to run_simulation().
+
+    Pre-generates perturbation random values with numpy to identify event cycles.
+    Only processes cycles that have events. Uses vectorized decay for gaps.
+
+    Same seed = same results, guaranteed.
+
+    Args:
+        config: SimConfig with parameters
+
+    Returns:
+        SimResult with full traces and statistics (identical to run_simulation)
+    """
+    # Setup: seed numpy first to pre-generate perturbation decisions
+    np.random.seed(config.random_seed)
+
+    # Pre-generate perturbation random values using numpy
+    perturbation_randoms = np.random.random(config.n_cycles)
+
+    # Identify event cycles where perturbation MIGHT fire (using base probability)
+    event_cycles = np.where(perturbation_randoms < PERTURBATION_PROBABILITY)[0]
+
+    # Seed standard random for simulation
+    random.seed(config.random_seed)
+
+    # Emit sim_config receipt
+    emit_receipt("sim_config", {
+        "tenant_id": "simulation",
+        "n_cycles": config.n_cycles,
+        "n_initial_patterns": config.n_initial_patterns,
+        "wound_rate": config.wound_rate,
+        "mutation_rate": config.mutation_rate,
+        "random_seed": config.random_seed
+    })
+
+    # Initialize state
+    state = initialize_state(config)
+    violations = []
+
+    # SPARSE LOOP: Only process event cycles, fast-forward through gaps
+    prev_cycle = -1
+
+    for event_cycle in event_cycles:
+        event_cycle = int(event_cycle)
+
+        # Vectorized fast-forward through non-event cycles
+        gap = event_cycle - prev_cycle - 1
+        if gap > 0:
+            # Apply vectorized decay for the gap
+            _fast_forward_decay(state, gap)
+
+        # Process event cycle with perturbation + nucleation
+        state.cycle = event_cycle
+        perturbation_receipt = _check_perturbation_sparse(
+            state, event_cycle, perturbation_randoms[event_cycle]
+        )
+
+        if perturbation_receipt:
+            state.receipt_ledger.append(perturbation_receipt)
+            state.window_perturbations += 1
+
+            # QUANTUM NUCLEATION: Counselors compete to capture
+            kick_phase = perturbation_receipt.get("phase", 0.0)
+            kick_resonant = perturbation_receipt.get("resonance_hit", False)
+            kick_direction = perturbation_receipt.get("bias_direction", 1)
+
+            winner = counselor_compete(state, perturbation_receipt, kick_phase, kick_resonant, kick_direction)
+            if winner:
+                seed_id, similarity = winner
+                capture_receipt = counselor_capture(state, seed_id, perturbation_receipt, similarity, event_cycle)
+                state.receipt_ledger.append(capture_receipt)
+
+                # Check crystallization
+                crystallization_receipt = check_crystallization(state, event_cycle)
+                if crystallization_receipt:
+                    state.receipt_ledger.append(crystallization_receipt)
+
+                # Check replication
+                replication_receipt = check_replication(state, event_cycle)
+                if replication_receipt:
+                    state.receipt_ledger.append(replication_receipt)
+
+        # Track boost sample
+        state.window_boost_samples.append(state.perturbation_boost)
+
+        # Evolve seeds at window intervals
+        if event_cycle > 0 and event_cycle % EVOLUTION_WINDOW_SEEDS == 0:
+            evolve_seeds(state, event_cycle)
+
+        prev_cycle = event_cycle
+
+    # Fast-forward remaining cycles after last event
+    remaining = config.n_cycles - 1 - prev_cycle
+    if remaining > 0:
+        _fast_forward_decay(state, remaining)
+
+    # Final state for cycle count
+    state.cycle = config.n_cycles - 1
+
+    # Collect statistics
+    statistics = {
+        "births": sum(1 for r in state.receipt_ledger if r.get("receipt_type") == "sim_birth"),
+        "deaths": sum(1 for r in state.receipt_ledger if r.get("receipt_type") == "sim_death"),
+        "recombinations": sum(1 for r in state.receipt_ledger if r.get("receipt_type") == "sim_mate"),
+        "blueprints_proposed": sum(1 for r in state.receipt_ledger if r.get("receipt_type") == "blueprint_proposed"),
+        "completeness_achieved": any(r.get("receipt_type") == "sim_complete" for r in state.receipt_ledger),
+        "final_population": len(state.active_patterns),
+        "superposition_count": len(state.superposition_patterns)
+    }
+
+    # Minimal traces (sparse version doesn't track per-cycle)
+    all_traces = {
+        "entropy_trace": state.entropy_trace if state.entropy_trace else [0.0],
+        "completeness_trace": state.completeness_trace if state.completeness_trace else [{}],
+        "population_trace": [len(state.active_patterns)]
+    }
+
+    # Emit sim_result receipt
+    emit_receipt("sim_result", {
+        "tenant_id": "simulation",
+        "cycles_completed": config.n_cycles,
+        "violations_count": len(violations),
+        "statistics": statistics
+    })
+
+    return SimResult(
+        final_state=state,
+        all_traces=all_traces,
+        violations=violations,
+        statistics=statistics,
+        config=config
+    )
+
+
+def _fast_forward_decay(state: SimState, n_cycles: int) -> None:
+    """
+    Apply vectorized decay over multiple cycles.
+
+    Uses geometric series formula: boost_new = boost * (1 - decay_rate)^n
+
+    Args:
+        state: Current SimState (mutated in place)
+        n_cycles: Number of cycles to fast-forward
+    """
+    if n_cycles <= 0 or state.perturbation_boost <= 0:
+        return
+
+    # For small boosts, decay approaches linear
+    # For larger boosts, use iterative approach to account for non-linear decay
+    for _ in range(min(n_cycles, 10)):  # Cap iterations for very large gaps
+        decay_rate = PERTURBATION_DECAY * (1 + NONLINEAR_DECAY_FACTOR * state.perturbation_boost)
+        state.perturbation_boost *= (1 - decay_rate)
+        state.perturbation_boost = max(0.0, state.perturbation_boost)
+
+    # For remaining cycles, use approximate linear decay
+    if n_cycles > 10:
+        remaining = n_cycles - 10
+        # Linear approximation: boost decays by ~40% per cycle at low values
+        decay_factor = (1 - PERTURBATION_DECAY) ** remaining
+        state.perturbation_boost *= decay_factor
+        state.perturbation_boost = max(0.0, state.perturbation_boost)
+
+
+def _simulate_cycle_sparse(state: SimState, config: SimConfig,
+                           is_event_cycle: bool, perturbation_random: float) -> List[dict]:
+    """
+    Sparse cycle simulation - optimized version of simulate_cycle.
+
+    For non-event cycles: skips expensive nucleation pipeline.
+    For event cycles: runs full perturbation and nucleation logic.
+
+    Args:
+        state: Current SimState (mutated in place)
+        config: SimConfig with parameters
+        is_event_cycle: Whether this cycle might have a perturbation event
+        perturbation_random: Pre-computed random value for perturbation decision
+
+    Returns:
+        List of violation dicts (if any)
+    """
+    violations = []
+
+    # Reset per-cycle counters
+    state.births_this_cycle = 0
+    state.deaths_this_cycle = 0
+    state.superposition_transitions_this_cycle = 0
+    state.wounds_this_cycle = 0
+    state.collapse_count_this_cycle = 0
+    state.emergence_count_this_cycle = 0
+
+    # CYCLE START: Vacuum fluctuation and reset boundary emissions
+    state.vacuum_floor = vacuum_fluctuation()
+    state.hawking_emissions_this_cycle = 0.0
+
+    # Measure initial entropy state
+    H_start = measure_state(state.receipt_ledger, state.vacuum_floor)
+    state.H_boundary_this_cycle = 0.0
+    state.operations_this_cycle = 0
+
+    # Generate wounds stochastically
+    state.operations_this_cycle += 1
+    if random.random() < config.wound_rate:
+        wound = simulate_wound(state, "operational")
+        state.wound_history.append(wound)
+        state.wounds_this_cycle += 1
+        state.H_boundary_this_cycle += measure_boundary_crossing(wound)
+
+    # Run autocatalysis detection
+    for pattern in state.active_patterns:
+        state.operations_this_cycle += 1
+    simulate_autocatalysis(state)
+
+    # Apply selection pressure
+    for pattern in state.active_patterns:
+        state.operations_this_cycle += 1
+        state.operations_this_cycle += 1
+    simulate_selection(state)
+
+    # Attempt recombination
+    if len(state.active_patterns) >= 2:
+        state.operations_this_cycle += 1
+    simulate_recombination(state, config)
+
+    # Run genesis check
+    if len(state.wound_history) >= 5:
+        state.operations_this_cycle += 1
+    simulate_genesis(state, config)
+
+    # Check completeness
+    state.operations_this_cycle += 1
+    simulate_completeness(state)
+
+    # CYCLE END: Measure final entropy state
+    H_end = measure_state(state.receipt_ledger, state.vacuum_floor)
+    H_observation = measure_observation_cost(state.operations_this_cycle)
+
+    # Attempt spontaneous emergence
+    emergence_receipt = attempt_spontaneous_emergence(state, H_observation)
+    if emergence_receipt is not None:
+        state.births_this_cycle += 1
+
+    # Process virtual patterns
+    collapsed_ids = process_virtual_patterns(state)
+
+    # Emit vacuum_state receipt
+    vacuum_state_receipt = emit_receipt("vacuum_state", {
+        "tenant_id": "simulation",
+        "cycle": state.cycle,
+        "vacuum_floor": state.vacuum_floor,
+        "fluctuation_delta": state.vacuum_floor - PLANCK_ENTROPY_BASE,
+        "virtual_patterns_count": len(state.virtual_patterns),
+        "superposition_patterns_count": len(state.superposition_patterns),
+        "spontaneous_emergence_attempted": emergence_receipt is not None,
+        "hawking_emissions_this_cycle": state.hawking_emissions_this_cycle
+    })
+    state.receipt_ledger.append(vacuum_state_receipt)
+
+    H_delta = H_end - H_start
+    balance = state.H_boundary_this_cycle + H_observation + H_delta
+    state.H_previous = H_end
+
+    # Emit entropy_state receipt
+    entropy_state_receipt = emit_entropy_state_receipt(
+        state, state.cycle, H_start, H_end, H_observation, balance
+    )
+    state.receipt_ledger.append(entropy_state_receipt)
+
+    # SPARSE OPTIMIZATION: Only run full perturbation check for event cycles
+    perturbation_receipt = None
+    if is_event_cycle:
+        # Full perturbation check with nucleation pipeline
+        perturbation_receipt = _check_perturbation_sparse(
+            state, state.cycle, perturbation_random
+        )
+        if perturbation_receipt:
+            state.receipt_ledger.append(perturbation_receipt)
+            state.window_perturbations += 1
+
+            # Check for persistent cluster detection
+            persistent_cluster_receipt = check_cluster_persistence(
+                state, perturbation_receipt["receipt_type"], state.cycle
+            )
+            if persistent_cluster_receipt:
+                state.receipt_ledger.append(persistent_cluster_receipt)
+
+            # QUANTUM NUCLEATION: Counselors compete to capture the kick
+            kick_phase = perturbation_receipt.get("phase", 0.0)
+            kick_resonant = perturbation_receipt.get("resonance_hit", False)
+            kick_direction = perturbation_receipt.get("bias_direction", 1)
+
+            winner = counselor_compete(state, perturbation_receipt, kick_phase, kick_resonant, kick_direction)
+            if winner:
+                seed_id, similarity = winner
+                capture_receipt = counselor_capture(state, seed_id, perturbation_receipt, similarity, state.cycle)
+                state.receipt_ledger.append(capture_receipt)
+
+                # Check for crystallization after capture
+                crystallization_receipt = check_crystallization(state, state.cycle)
+                if crystallization_receipt:
+                    state.receipt_ledger.append(crystallization_receipt)
+
+                # Check for replication after crystallization
+                replication_receipt = check_replication(state, state.cycle)
+                if replication_receipt:
+                    state.receipt_ledger.append(replication_receipt)
+    else:
+        # Non-event cycle: just apply decay, skip nucleation
+        decay_rate = PERTURBATION_DECAY * (1 + NONLINEAR_DECAY_FACTOR * state.perturbation_boost)
+        state.perturbation_boost *= (1 - decay_rate)
+        state.perturbation_boost = max(0.0, state.perturbation_boost)
+
+    # Resonance peak check
+    resonance_peak_receipt = check_resonance_peak(state, state.cycle)
+    if resonance_peak_receipt:
+        state.receipt_ledger.append(resonance_peak_receipt)
+
+    # Structure formation check
+    structure_formation_receipt = check_structure_formation(state, state.cycle)
+    if structure_formation_receipt:
+        state.receipt_ledger.append(structure_formation_receipt)
+
+    # Basin escape check
+    basin_escape_receipt = check_basin_escape(state, state.cycle)
+    if basin_escape_receipt:
+        state.receipt_ledger.append(basin_escape_receipt)
+        state.window_escapes += 1
+
+    # Track boost sample
+    state.window_boost_samples.append(state.perturbation_boost)
+
+    # Evolution window check
+    evolution_receipt = check_evolution_window(state, state.cycle)
+    if evolution_receipt:
+        state.receipt_ledger.append(evolution_receipt)
+
+    # Baseline shift tracking
+    baseline_shift_receipt = track_baseline_shift(state, state.cycle)
+    if baseline_shift_receipt:
+        state.receipt_ledger.append(baseline_shift_receipt)
+
+    # Symmetry break check
+    symmetry_break_receipt = check_symmetry_break(state, state.receipt_ledger, state.cycle)
+    if symmetry_break_receipt:
+        state.receipt_ledger.append(symmetry_break_receipt)
+
+    # Proto-form check
+    proto_form_receipt = check_proto_form(state, state.cycle)
+    if proto_form_receipt:
+        state.receipt_ledger.append(proto_form_receipt)
+
+    # Evolve seeds
+    evolve_seeds(state, state.cycle)
+
+    # Compute Hawking flux metrics
+    flux, trend = compute_hawking_flux(state)
+    collapse_rate = compute_collapse_rate(state)
+    emergence_rate = compute_emergence_rate(state)
+    criticality = compute_system_criticality(state, state.cycle)
+
+    if state.cycle > 0:
+        criticality_rate = criticality - state.previous_criticality
+    else:
+        criticality_rate = 0.0
+
+    check_criticality_alert(state, state.cycle, criticality)
+    check_phase_transition(state, state.cycle, criticality, H_end)
+
+    if state.phase_transition_occurred:
+        state.cycles_since_crossing += 1
+
+    state.previous_criticality = criticality
+
+    effective_crit = criticality + state.perturbation_boost
+
+    # Horizon crossing check
+    if effective_crit >= 1.0 and not state.phase_transition_occurred:
+        state.horizon_crossings += 1
+        state.phase_transition_occurred = True
+        horizon_crossing_receipt = emit_receipt("horizon_crossing", {
+            "tenant_id": "simulation",
+            "cycle": state.cycle,
+            "base_criticality": criticality,
+            "perturbation_boost": state.perturbation_boost,
+            "effective_criticality": effective_crit,
+            "crossing_number": state.horizon_crossings
+        })
+        state.receipt_ledger.append(horizon_crossing_receipt)
+
+    hawking_flux_receipt = emit_hawking_flux_receipt(
+        state, state.cycle, flux, trend, collapse_rate, emergence_rate, criticality,
+        H_delta, criticality_rate
+    )
+    state.receipt_ledger.append(hawking_flux_receipt)
+
+    # Validate conservation
+    is_valid = validate_conservation(state)
+    if not is_valid:
+        violations.append({
+            "cycle": state.cycle,
+            "type": "conservation_violation",
+            "H_start": H_start,
+            "H_end": H_end,
+            "H_boundary": state.H_boundary_this_cycle,
+            "H_observation": H_observation,
+            "balance": balance
+        })
+
+    # Record traces
+    state.entropy_trace.append(H_end)
+    coverage = level_coverage(state.receipt_ledger)
+    state.completeness_trace.append(coverage)
+
+    # Emit sim_cycle receipt
+    receipt = emit_receipt("sim_cycle", {
+        "tenant_id": "simulation",
+        "cycle": state.cycle,
+        "births": state.births_this_cycle,
+        "deaths": state.deaths_this_cycle,
+        "H_delta": H_delta,
+        "violations": len(violations),
+        "active_patterns": len(state.active_patterns)
+    })
+    state.receipt_ledger.append(receipt)
+
+    return violations
+
+
+def _check_perturbation_sparse(state: SimState, cycle: int,
+                                perturbation_random: float) -> Optional[dict]:
+    """
+    Sparse version of check_perturbation using pre-computed random value.
+
+    Uses the pre-generated numpy random value for the perturbation decision,
+    while maintaining identical logic for everything else.
+
+    Args:
+        state: Current SimState (mutated in place)
+        cycle: Current cycle number
+        perturbation_random: Pre-computed random value (from numpy)
+
+    Returns:
+        Receipt dict if perturbation fired, None otherwise
+    """
+    import math
+
+    # Apply non-linear decay BEFORE generating new kicks
+    decay_rate = PERTURBATION_DECAY * (1 + NONLINEAR_DECAY_FACTOR * state.perturbation_boost)
+    state.perturbation_boost *= (1 - decay_rate)
+    state.perturbation_boost = max(0.0, state.perturbation_boost)
+
+    # Check phase sync
+    synced, phase = check_phase_sync(state)
+
+    # Compute interference factor
+    interference = compute_interference(phase, state.last_phase)
+
+    # Check resonance
+    resonance_hit, resonance_factor = check_resonance(state)
+    if resonance_hit:
+        state.resonance_hits += 1
+
+    # Get effective probability
+    effective_prob = compute_effective_probability(state, synced)
+    adaptive_active = state.perturbation_boost > ADAPTIVE_THRESHOLD
+
+    if adaptive_active:
+        state.adaptive_triggers += 1
+
+    # Use pre-computed random value for decision
+    if perturbation_random < effective_prob:
+        # Generate cluster size using Poisson distribution
+        cluster_size = min(poisson_manual(CLUSTER_LAMBDA), MAX_CLUSTER_SIZE)
+
+        # Apply quantum-inspired variance
+        quantum_factor = vacuum_fluctuation() / PLANCK_ENTROPY_BASE
+
+        # Combined variance
+        base_variance = random.gauss(0, PERTURBATION_VARIANCE)
+        variance_factor = 1.0 + base_variance * quantum_factor
+
+        # Cap variance_factor
+        variance_factor_uncapped = variance_factor
+        variance_factor = max(0.1, min(MAX_MAGNITUDE_FACTOR, variance_factor))
+        capped = (variance_factor_uncapped != variance_factor)
+
+        # Apply multiple kicks in cluster
+        total_added = 0.0
+        biased_magnitude = 0.0
+        for i in range(cluster_size):
+            actual_mag = PERTURBATION_MAGNITUDE * variance_factor
+            effective_mag = actual_mag * (1.0 + 0.5 * interference)
+            resonance_mag = effective_mag * resonance_factor
+
+            if i == 0:
+                final_mag = apply_asymmetry_bias(resonance_mag, state)
+                biased_magnitude = final_mag
+            else:
+                final_mag = resonance_mag
+
+            final_mag = max(0.01, final_mag)
+            state.perturbation_boost += final_mag
+            total_added += final_mag
+
+        # Update state for next kick
+        state.last_phase = phase
+        if synced:
+            state.sync_count += 1
+
+        # Classify interference type
+        if interference > 0.3:
+            interference_type = "constructive"
+        elif interference < -0.3:
+            interference_type = "destructive"
+        else:
+            interference_type = "neutral"
+
+        return {
+            "receipt_type": "perturbation",
+            "cycle": cycle,
+            "magnitude": PERTURBATION_MAGNITUDE,
+            "cluster_size": cluster_size,
+            "total_added": total_added,
+            "total_boost": state.perturbation_boost,
+            "decay_rate_at_emission": decay_rate,
+            "effective_probability": effective_prob,
+            "adaptive_active": adaptive_active,
+            "quantum_factor": quantum_factor,
+            "variance_factor": variance_factor,
+            "capped": capped,
+            "phase": phase,
+            "synced": synced,
+            "interference_factor": interference,
+            "interference_type": interference_type,
+            "resonance_hit": resonance_hit,
+            "resonance_factor": resonance_factor,
+            "bias_direction": state.bias_direction,
+            "biased_magnitude": biased_magnitude,
+            "source": "gravitational_wave_cluster_quantum_interference_asymmetry"
+        }
+
+    return None
 
 
 def initialize_state(config: SimConfig) -> SimState:
