@@ -53,10 +53,10 @@ CRITICALITY_PHASE_TRANSITION = 1.0  # The quantum leap point
 ALERT_COOLDOWN_CYCLES = 50  # Prevent alert spam near threshold
 
 # Perturbation constants (stochastic GW kicks) — tuned via Grok analysis
-PERTURBATION_PROBABILITY = 0.5   # 50% chance per cycle (more frequent events = more measurements)
-PERTURBATION_MAGNITUDE = 0.28    # size of kick (stronger kicks)
-PERTURBATION_DECAY = 0.3         # kick decays 30% per cycle (slower decay)
-PERTURBATION_VARIANCE = 0.65     # chaotic variance in magnitude (amplified chaos)
+PERTURBATION_PROBABILITY = 0.55  # 55% chance per cycle (more frequent events = more measurements)
+PERTURBATION_MAGNITUDE = 0.3     # size of kick (stronger kicks)
+PERTURBATION_DECAY = 0.25        # kick decays 25% per cycle (slower decay)
+PERTURBATION_VARIANCE = 0.7      # chaotic variance in magnitude (amplified chaos)
 BASIN_ESCAPE_THRESHOLD = 0.2     # escape detection threshold (higher bar)
 CLUSTER_LAMBDA = 3               # Poisson parameter for cluster size (avg 3 kicks per event)
 MAX_CLUSTER_SIZE = 5             # Safety cap on cluster size (prevent explosion)
@@ -122,7 +122,7 @@ ARCHITECT_SIZE_TRIGGER = 200  # large crystals bias toward ARCHITECT
 GOVERNANCE_NODE_THRESHOLD = 10  # alert threshold for governance nodes
 
 # Entropy amplifier constants (emergent HUNTER via quantum measurement)
-ENTROPY_AMPLIFIER = 0.1  # boost ENTROPY_INCREASE similarity → more HUNTER
+ENTROPY_AMPLIFIER = 0.15  # boost ENTROPY_INCREASE similarity → more HUNTER
 HUNTER_SIZE_TRIGGER = 50  # small crystals bias toward HUNTER (quantum eigenspace)
 ENTROPY_SURGE_THRESHOLD = 0.1  # surge detection threshold (measurement event)
 
@@ -130,6 +130,10 @@ ENTROPY_SURGE_THRESHOLD = 0.1  # surge detection threshold (measurement event)
 EFFECT_ENTROPY_INCREASE = "ENTROPY_INCREASE"
 EFFECT_RESONANCE_TRIGGER = "RESONANCE_TRIGGER"
 EFFECT_SYMMETRY_BREAK = "SYMMETRY_BREAK"
+
+# Uniform kick distribution — fair ticket printer for seed model lottery
+UNIFORM_KICK_DISTRIBUTION = True  # enable uniform effect selection (1/3 each type)
+EFFECT_TYPES = ["ENTROPY_INCREASE", "RESONANCE_TRIGGER", "SYMMETRY_BREAK"]  # the three effect types
 
 # Module exports for receipt types
 RECEIPT_SCHEMA = [
@@ -317,6 +321,9 @@ class SimState:
     # Entropy surge tracking fields (quantum measurement events)
     entropy_surge_count: int = 0  # measurement events (entropy surges)
     equilibrium_score: float = 0.0  # archetype balance metric: min(h,s,a)/max(h,s,a)
+    # Kick distribution tracking fields (uniform ticket printer verification)
+    kick_distribution: Dict[str, int] = field(default_factory=lambda: {"ENTROPY_INCREASE": 0, "RESONANCE_TRIGGER": 0, "SYMMETRY_BREAK": 0})  # count kicks by effect
+    first_capture_distribution: Dict[str, int] = field(default_factory=lambda: {"HUNTER": 0, "SHEPHERD": 0, "ARCHITECT": 0})  # count first captures by archetype
 
 
 @dataclass(frozen=True)
@@ -383,7 +390,10 @@ def run_multiverse(n_universes: int, n_cycles: int, base_seed: int = 42) -> dict
         "total_hybrid_formations": 0,
         # Entropy amplifier tracking (quantum measurement)
         "total_entropy_surges": 0,
-        "total_equilibrium": 0.0
+        "total_equilibrium": 0.0,
+        # Kick distribution tracking (uniform ticket printer verification)
+        "total_kick_distribution": {"ENTROPY_INCREASE": 0, "RESONANCE_TRIGGER": 0, "SYMMETRY_BREAK": 0},
+        "total_first_capture_distribution": {"HUNTER": 0, "SHEPHERD": 0, "ARCHITECT": 0}
     }
 
     for i in range(n_universes):
@@ -423,7 +433,10 @@ def run_multiverse(n_universes: int, n_cycles: int, base_seed: int = 42) -> dict
             "hybrid_formations": result.final_state.hybrid_formations,
             # Entropy amplifier tracking (quantum measurement)
             "entropy_surge_count": result.final_state.entropy_surge_count,
-            "equilibrium_score": result.final_state.equilibrium_score
+            "equilibrium_score": result.final_state.equilibrium_score,
+            # Kick distribution tracking (uniform ticket printer verification)
+            "kick_distribution": dict(result.final_state.kick_distribution),
+            "first_capture_distribution": dict(result.final_state.first_capture_distribution)
         })
 
         # Aggregate statistics
@@ -449,6 +462,11 @@ def run_multiverse(n_universes: int, n_cycles: int, base_seed: int = 42) -> dict
         # Entropy amplifier aggregation (quantum measurement)
         aggregated_stats["total_entropy_surges"] += result.final_state.entropy_surge_count
         aggregated_stats["total_equilibrium"] += result.final_state.equilibrium_score
+        # Kick distribution aggregation (uniform ticket printer verification)
+        for effect, count in result.final_state.kick_distribution.items():
+            aggregated_stats["total_kick_distribution"][effect] = aggregated_stats["total_kick_distribution"].get(effect, 0) + count
+        for archetype, count in result.final_state.first_capture_distribution.items():
+            aggregated_stats["total_first_capture_distribution"][archetype] = aggregated_stats["total_first_capture_distribution"].get(archetype, 0) + count
         if result.statistics["completeness_achieved"]:
             aggregated_stats["completeness_achieved_count"] += 1
         if result.final_state.structure_formed:
@@ -477,6 +495,12 @@ def run_multiverse(n_universes: int, n_cycles: int, base_seed: int = 42) -> dict
     # Entropy amplifier averages (quantum measurement)
     aggregated_stats["avg_entropy_surges"] = aggregated_stats["total_entropy_surges"] / n_universes
     aggregated_stats["avg_equilibrium"] = aggregated_stats["total_equilibrium"] / n_universes
+    # Lottery fairness: ratio of min to max in first_capture_distribution
+    first_cap_values = list(aggregated_stats["total_first_capture_distribution"].values())
+    if max(first_cap_values) > 0:
+        aggregated_stats["lottery_fairness"] = min(first_cap_values) / max(first_cap_values)
+    else:
+        aggregated_stats["lottery_fairness"] = 0.0
 
     # Emit multiverse_complete receipt
     complete_receipt = emit_receipt("multiverse_complete", {
@@ -2640,7 +2664,10 @@ def classify_effect_type(kick_receipt: dict) -> str:
     """
     Classify the effect type of a captured kick for archetype discovery.
 
-    Effect types:
+    When UNIFORM_KICK_DISTRIBUTION=True, selects effect type uniformly at random
+    (1/3 probability each) to ensure fair lottery tickets for seed model.
+
+    When UNIFORM_KICK_DISTRIBUTION=False (legacy mode):
     - RESONANCE_TRIGGER: Kick was resonant (resonance_hit=True)
     - SYMMETRY_BREAK: Kick caused interference (constructive/destructive)
     - ENTROPY_INCREASE: Default type (general entropy increase)
@@ -2651,6 +2678,11 @@ def classify_effect_type(kick_receipt: dict) -> str:
     Returns:
         str: Effect type constant
     """
+    # Uniform distribution mode: fair ticket printer for seed model lottery
+    if UNIFORM_KICK_DISTRIBUTION:
+        return random.choice(EFFECT_TYPES)
+
+    # Legacy mode: classify based on kick properties
     # Resonance takes priority
     if kick_receipt.get("resonance_hit", False):
         return EFFECT_RESONANCE_TRIGGER
@@ -2697,6 +2729,9 @@ def counselor_capture(state: SimState, seed_id: int, kick_receipt: dict,
 
     # Track effect type in crystal's distribution
     crystal.effect_distribution[effect_type] = crystal.effect_distribution.get(effect_type, 0) + 1
+
+    # Track kick distribution at state level (verify uniform ticket printer)
+    state.kick_distribution[effect_type] = state.kick_distribution.get(effect_type, 0) + 1
 
     # Add to crystal members with similarity and effect_type for tracking
     member = {**kick_receipt, "capture_similarity": similarity, "effect_type": effect_type}
@@ -2888,6 +2923,11 @@ def check_crystallization(state: SimState, cycle: int) -> Optional[dict]:
                 state.hunter_formations += 1
             elif discovered_archetype == "HYBRID":
                 state.hybrid_formations += 1
+
+            # Track first capture distribution (lottery fairness verification)
+            # The FIRST crystal to crystallize determines the archetype lottery winner
+            if state.crystals_formed == 1 and discovered_archetype in state.first_capture_distribution:
+                state.first_capture_distribution[discovered_archetype] += 1
 
             # Boost beacons if this is the FIRST crystal
             if state.crystals_formed == 1:
