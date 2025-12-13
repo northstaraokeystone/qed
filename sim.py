@@ -53,10 +53,10 @@ CRITICALITY_PHASE_TRANSITION = 1.0  # The quantum leap point
 ALERT_COOLDOWN_CYCLES = 50  # Prevent alert spam near threshold
 
 # Perturbation constants (stochastic GW kicks) — tuned via Grok analysis
-PERTURBATION_PROBABILITY = 0.45  # 45% chance per cycle (more frequent events)
-PERTURBATION_MAGNITUDE = 0.25    # size of kick (stronger kicks)
-PERTURBATION_DECAY = 0.35        # kick decays 35% per cycle (slower decay)
-PERTURBATION_VARIANCE = 0.6      # chaotic variance in magnitude (amplified chaos)
+PERTURBATION_PROBABILITY = 0.5   # 50% chance per cycle (more frequent events = more measurements)
+PERTURBATION_MAGNITUDE = 0.28    # size of kick (stronger kicks)
+PERTURBATION_DECAY = 0.3         # kick decays 30% per cycle (slower decay)
+PERTURBATION_VARIANCE = 0.65     # chaotic variance in magnitude (amplified chaos)
 BASIN_ESCAPE_THRESHOLD = 0.2     # escape detection threshold (higher bar)
 CLUSTER_LAMBDA = 3               # Poisson parameter for cluster size (avg 3 kicks per event)
 MAX_CLUSTER_SIZE = 5             # Safety cap on cluster size (prevent explosion)
@@ -70,7 +70,7 @@ EVOLUTION_WINDOW = 500           # cycles between evolution snapshots
 MAX_MAGNITUDE_FACTOR = 3.0       # cap on magnitude multiplier (prevent explosion)
 
 # Adaptive feedback constants (threshold-based state changes)
-ADAPTIVE_THRESHOLD = 0.5         # triggers probability boost when boost > threshold
+ADAPTIVE_THRESHOLD = 0.55        # triggers probability boost when boost > threshold (higher bar)
 SYNC_BOOST = 0.2                 # probability increase amount for synced kicks (replaces ADAPTIVE_BOOST)
 MAX_PROBABILITY = 0.5            # cap to prevent runaway
 
@@ -117,9 +117,14 @@ MAX_GROWTH_BOOST = 2.0  # cap to prevent runaway (size 50 = 2.0x)
 BRANCH_INITIATION_THRESHOLD = 5  # alert when exceeded
 
 # Governance bias constants (emergent SHEPHERD and ARCHITECT)
-GOVERNANCE_BIAS = 0.15  # boost RESONANCE_TRIGGER similarity → more SHEPHERD
+GOVERNANCE_BIAS = 0.2   # boost RESONANCE_TRIGGER similarity → more SHEPHERD
 ARCHITECT_SIZE_TRIGGER = 200  # large crystals bias toward ARCHITECT
 GOVERNANCE_NODE_THRESHOLD = 10  # alert threshold for governance nodes
+
+# Entropy amplifier constants (emergent HUNTER via quantum measurement)
+ENTROPY_AMPLIFIER = 0.1  # boost ENTROPY_INCREASE similarity → more HUNTER
+HUNTER_SIZE_TRIGGER = 50  # small crystals bias toward HUNTER (quantum eigenspace)
+ENTROPY_SURGE_THRESHOLD = 0.1  # surge detection threshold (measurement event)
 
 # Effect types for archetype discovery (wave function collapse)
 EFFECT_ENTROPY_INCREASE = "ENTROPY_INCREASE"
@@ -309,6 +314,9 @@ class SimState:
     architect_formations: int = 0  # count of ARCHITECT instances
     hunter_formations: int = 0  # count of HUNTER instances
     hybrid_formations: int = 0  # count of HYBRID instances
+    # Entropy surge tracking fields (quantum measurement events)
+    entropy_surge_count: int = 0  # measurement events (entropy surges)
+    equilibrium_score: float = 0.0  # archetype balance metric: min(h,s,a)/max(h,s,a)
 
 
 @dataclass(frozen=True)
@@ -372,7 +380,10 @@ def run_multiverse(n_universes: int, n_cycles: int, base_seed: int = 42) -> dict
         "total_governance_nodes": 0,
         "total_architect_formations": 0,
         "total_hunter_formations": 0,
-        "total_hybrid_formations": 0
+        "total_hybrid_formations": 0,
+        # Entropy amplifier tracking (quantum measurement)
+        "total_entropy_surges": 0,
+        "total_equilibrium": 0.0
     }
 
     for i in range(n_universes):
@@ -409,7 +420,10 @@ def run_multiverse(n_universes: int, n_cycles: int, base_seed: int = 42) -> dict
             "governance_nodes": result.final_state.governance_nodes,
             "architect_formations": result.final_state.architect_formations,
             "hunter_formations": result.final_state.hunter_formations,
-            "hybrid_formations": result.final_state.hybrid_formations
+            "hybrid_formations": result.final_state.hybrid_formations,
+            # Entropy amplifier tracking (quantum measurement)
+            "entropy_surge_count": result.final_state.entropy_surge_count,
+            "equilibrium_score": result.final_state.equilibrium_score
         })
 
         # Aggregate statistics
@@ -432,6 +446,9 @@ def run_multiverse(n_universes: int, n_cycles: int, base_seed: int = 42) -> dict
         aggregated_stats["total_architect_formations"] += result.final_state.architect_formations
         aggregated_stats["total_hunter_formations"] += result.final_state.hunter_formations
         aggregated_stats["total_hybrid_formations"] += result.final_state.hybrid_formations
+        # Entropy amplifier aggregation (quantum measurement)
+        aggregated_stats["total_entropy_surges"] += result.final_state.entropy_surge_count
+        aggregated_stats["total_equilibrium"] += result.final_state.equilibrium_score
         if result.statistics["completeness_achieved"]:
             aggregated_stats["completeness_achieved_count"] += 1
         if result.final_state.structure_formed:
@@ -457,6 +474,9 @@ def run_multiverse(n_universes: int, n_cycles: int, base_seed: int = 42) -> dict
     aggregated_stats["avg_architect_formations"] = aggregated_stats["total_architect_formations"] / n_universes
     aggregated_stats["avg_hunter_formations"] = aggregated_stats["total_hunter_formations"] / n_universes
     aggregated_stats["avg_hybrid_formations"] = aggregated_stats["total_hybrid_formations"] / n_universes
+    # Entropy amplifier averages (quantum measurement)
+    aggregated_stats["avg_entropy_surges"] = aggregated_stats["total_entropy_surges"] / n_universes
+    aggregated_stats["avg_equilibrium"] = aggregated_stats["total_equilibrium"] / n_universes
 
     # Emit multiverse_complete receipt
     complete_receipt = emit_receipt("multiverse_complete", {
@@ -523,6 +543,11 @@ def run_simulation(config: SimConfig) -> SimResult:
         "completeness_trace": state.completeness_trace,
         "population_trace": [len(state.active_patterns)]  # Simplified for now
     }
+
+    # Calculate archetype equilibrium (quantum measurement balance)
+    h, s, a = state.hunter_formations, state.governance_nodes, state.architect_formations
+    if max(h, s, a) > 0:
+        state.equilibrium_score = min(h, s, a) / max(h, s, a)
 
     # Emit sim_result receipt
     emit_receipt("sim_result", {
@@ -659,6 +684,11 @@ def run_simulation_sparse(config: SimConfig) -> SimResult:
         "completeness_trace": state.completeness_trace if state.completeness_trace else [{}],
         "population_trace": [len(state.active_patterns)]
     }
+
+    # Calculate archetype equilibrium (quantum measurement balance)
+    h, s, a = state.hunter_formations, state.governance_nodes, state.architect_formations
+    if max(h, s, a) > 0:
+        state.equilibrium_score = min(h, s, a) / max(h, s, a)
 
     # Emit sim_result receipt
     emit_receipt("sim_result", {
@@ -954,6 +984,10 @@ def _simulate_cycle_sparse(state: SimState, config: SimConfig,
     state.entropy_trace.append(H_end)
     coverage = level_coverage(state.receipt_ledger)
     state.completeness_trace.append(coverage)
+
+    # Track entropy surges (quantum measurement events)
+    if H_delta > ENTROPY_SURGE_THRESHOLD:
+        state.entropy_surge_count += 1
 
     # Emit sim_cycle receipt
     receipt = emit_receipt("sim_cycle", {
@@ -1404,6 +1438,10 @@ def simulate_cycle(state: SimState, config: SimConfig) -> List[dict]:
     state.entropy_trace.append(current_entropy)
     coverage = level_coverage(state.receipt_ledger)
     state.completeness_trace.append(coverage)
+
+    # Track entropy surges (quantum measurement events)
+    if H_delta > ENTROPY_SURGE_THRESHOLD:
+        state.entropy_surge_count += 1
 
     # Emit sim_cycle receipt
     receipt = emit_receipt("sim_cycle", {
@@ -2570,6 +2608,12 @@ def counselor_compete(state: SimState, kick_receipt: dict, kick_phase: float,
         # Apply governance bias for resonant kicks → boosts SHEPHERD births
         if kick_resonant:
             similarity += GOVERNANCE_BIAS
+        else:
+            # Apply entropy amplifier for ENTROPY_INCREASE kicks → boosts HUNTER births
+            # ENTROPY_INCREASE = not resonant AND not symmetry breaking interference
+            interference_type = kick_receipt.get("interference_type", "neutral")
+            if interference_type not in ("constructive", "destructive"):
+                similarity += ENTROPY_AMPLIFIER
 
         # Apply autocatalysis amplification for crystallized crystals
         if crystal.crystallized:
@@ -2736,6 +2780,11 @@ def discover_archetype(crystal: Crystal) -> tuple[str, float, bool]:
     if crystal_size > ARCHITECT_SIZE_TRIGGER:
         architect_bias = crystal_size * 0.01
         dist[EFFECT_SYMMETRY_BREAK] = dist.get(EFFECT_SYMMETRY_BREAK, 0) + architect_bias
+
+    # Apply size-based HUNTER bias for small crystals (quantum eigenspace)
+    if crystal_size < HUNTER_SIZE_TRIGGER:
+        hunter_bias = (HUNTER_SIZE_TRIGGER - crystal_size) * 0.01
+        dist[EFFECT_ENTROPY_INCREASE] = dist.get(EFFECT_ENTROPY_INCREASE, 0) + hunter_bias
 
     total = sum(dist.values())
 
