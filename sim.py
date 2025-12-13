@@ -117,12 +117,12 @@ MAX_GROWTH_BOOST = 2.0  # cap to prevent runaway (size 50 = 2.0x)
 BRANCH_INITIATION_THRESHOLD = 5  # alert when exceeded
 
 # Governance bias constants (emergent SHEPHERD and ARCHITECT)
-GOVERNANCE_BIAS = 0.2   # boost RESONANCE_TRIGGER similarity → more SHEPHERD
+GOVERNANCE_BIAS = 0.35  # boost RESONANCE_TRIGGER similarity → more SHEPHERD
 ARCHITECT_SIZE_TRIGGER = 200  # large crystals bias toward ARCHITECT
 GOVERNANCE_NODE_THRESHOLD = 10  # alert threshold for governance nodes
 
 # Entropy amplifier constants (emergent HUNTER via quantum measurement)
-ENTROPY_AMPLIFIER = 0.15  # boost ENTROPY_INCREASE similarity → more HUNTER
+ENTROPY_AMPLIFIER = 0.2   # boost ENTROPY_INCREASE similarity → more HUNTER
 HUNTER_SIZE_TRIGGER = 50  # small crystals bias toward HUNTER (quantum eigenspace)
 ENTROPY_SURGE_THRESHOLD = 0.1  # surge detection threshold (measurement event)
 
@@ -135,7 +135,7 @@ ARCHETYPE_TRIGGER_SIZE = 55                 # minimum size for differentiation e
 
 # Quantum ARCHITECT mechanisms — tunneling + entanglement
 FIX_AMPLIFIER = 0.3              # general fix amplifier
-SYMMETRY_BIAS = 0.25             # symmetry capture boost (parallel to GOVERNANCE_BIAS and ENTROPY_AMPLIFIER)
+SYMMETRY_BIAS = 0.4              # symmetry capture boost (parallel to GOVERNANCE_BIAS and ENTROPY_AMPLIFIER)
 TUNNELING_CONSTANT = 0.1         # barrier penetration factor for quantum tunneling
 TUNNELING_FLOOR = 0.3            # minimum symmetry ratio to attempt tunnel
 ENTANGLEMENT_FACTOR = 0.1        # deficit boost multiplier for entanglement correction
