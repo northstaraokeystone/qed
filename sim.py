@@ -53,10 +53,10 @@ CRITICALITY_PHASE_TRANSITION = 1.0  # The quantum leap point
 ALERT_COOLDOWN_CYCLES = 50  # Prevent alert spam near threshold
 
 # Perturbation constants (stochastic GW kicks) — tuned via Grok analysis
-PERTURBATION_PROBABILITY = 0.55  # 55% chance per cycle (more frequent events = more measurements)
-PERTURBATION_MAGNITUDE = 0.3     # size of kick (stronger kicks)
-PERTURBATION_DECAY = 0.25        # kick decays 25% per cycle (slower decay)
-PERTURBATION_VARIANCE = 0.7      # chaotic variance in magnitude (amplified chaos)
+PERTURBATION_PROBABILITY = 0.6   # 60% chance per cycle (more frequent events = more measurements)
+PERTURBATION_MAGNITUDE = 0.32    # size of kick (stronger kicks)
+PERTURBATION_DECAY = 0.2         # kick decays 20% per cycle (slower decay)
+PERTURBATION_VARIANCE = 0.75     # chaotic variance in magnitude (amplified chaos)
 BASIN_ESCAPE_THRESHOLD = 0.2     # escape detection threshold (higher bar)
 CLUSTER_LAMBDA = 3               # Poisson parameter for cluster size (avg 3 kicks per event)
 MAX_CLUSTER_SIZE = 5             # Safety cap on cluster size (prevent explosion)
@@ -125,6 +125,12 @@ GOVERNANCE_NODE_THRESHOLD = 10  # alert threshold for governance nodes
 ENTROPY_AMPLIFIER = 0.15  # boost ENTROPY_INCREASE similarity → more HUNTER
 HUNTER_SIZE_TRIGGER = 50  # small crystals bias toward HUNTER (quantum eigenspace)
 ENTROPY_SURGE_THRESHOLD = 0.1  # surge detection threshold (measurement event)
+
+# HYBRID differentiation constants (cosmos specializing)
+RESONANCE_DIFFERENTIATION_THRESHOLD = 0.6  # HYBRID + resonance > 0.6 → SHEPHERD
+ENTROPY_DIFFERENTIATION_THRESHOLD = 0.4    # HYBRID + entropy > 0.4 → HUNTER
+DIFFERENTIATION_BIAS = 0.2                  # probability boost for differentiation check
+ARCHETYPE_TRIGGER_SIZE = 40                 # minimum size for differentiation eligibility
 
 # Effect types for archetype discovery (wave function collapse)
 EFFECT_ENTROPY_INCREASE = "ENTROPY_INCREASE"
@@ -318,6 +324,8 @@ class SimState:
     architect_formations: int = 0  # count of ARCHITECT instances
     hunter_formations: int = 0  # count of HUNTER instances
     hybrid_formations: int = 0  # count of HYBRID instances
+    # HYBRID differentiation tracking (cosmos specializing)
+    hybrid_differentiation_count: int = 0  # count of HYBRID→archetype transitions
     # Entropy surge tracking fields (quantum measurement events)
     entropy_surge_count: int = 0  # measurement events (entropy surges)
     equilibrium_score: float = 0.0  # archetype balance metric: min(h,s,a)/max(h,s,a)
@@ -388,6 +396,8 @@ def run_multiverse(n_universes: int, n_cycles: int, base_seed: int = 42) -> dict
         "total_architect_formations": 0,
         "total_hunter_formations": 0,
         "total_hybrid_formations": 0,
+        # HYBRID differentiation tracking (cosmos specializing)
+        "total_hybrid_differentiations": 0,
         # Entropy amplifier tracking (quantum measurement)
         "total_entropy_surges": 0,
         "total_equilibrium": 0.0,
@@ -431,6 +441,8 @@ def run_multiverse(n_universes: int, n_cycles: int, base_seed: int = 42) -> dict
             "architect_formations": result.final_state.architect_formations,
             "hunter_formations": result.final_state.hunter_formations,
             "hybrid_formations": result.final_state.hybrid_formations,
+            # HYBRID differentiation tracking (cosmos specializing)
+            "hybrid_differentiation_count": result.final_state.hybrid_differentiation_count,
             # Entropy amplifier tracking (quantum measurement)
             "entropy_surge_count": result.final_state.entropy_surge_count,
             "equilibrium_score": result.final_state.equilibrium_score,
@@ -459,6 +471,8 @@ def run_multiverse(n_universes: int, n_cycles: int, base_seed: int = 42) -> dict
         aggregated_stats["total_architect_formations"] += result.final_state.architect_formations
         aggregated_stats["total_hunter_formations"] += result.final_state.hunter_formations
         aggregated_stats["total_hybrid_formations"] += result.final_state.hybrid_formations
+        # HYBRID differentiation aggregation (cosmos specializing)
+        aggregated_stats["total_hybrid_differentiations"] += result.final_state.hybrid_differentiation_count
         # Entropy amplifier aggregation (quantum measurement)
         aggregated_stats["total_entropy_surges"] += result.final_state.entropy_surge_count
         aggregated_stats["total_equilibrium"] += result.final_state.equilibrium_score
@@ -492,6 +506,8 @@ def run_multiverse(n_universes: int, n_cycles: int, base_seed: int = 42) -> dict
     aggregated_stats["avg_architect_formations"] = aggregated_stats["total_architect_formations"] / n_universes
     aggregated_stats["avg_hunter_formations"] = aggregated_stats["total_hunter_formations"] / n_universes
     aggregated_stats["avg_hybrid_formations"] = aggregated_stats["total_hybrid_formations"] / n_universes
+    # HYBRID differentiation averages (cosmos specializing)
+    aggregated_stats["avg_hybrid_differentiations"] = aggregated_stats["total_hybrid_differentiations"] / n_universes
     # Entropy amplifier averages (quantum measurement)
     aggregated_stats["avg_entropy_surges"] = aggregated_stats["total_entropy_surges"] / n_universes
     aggregated_stats["avg_equilibrium"] = aggregated_stats["total_equilibrium"] / n_universes
@@ -673,6 +689,11 @@ def run_simulation_sparse(config: SimConfig) -> SimResult:
                 replication_receipt = check_replication(state, event_cycle)
                 if replication_receipt:
                     state.receipt_ledger.append(replication_receipt)
+
+                # Check for HYBRID differentiation (cosmos specializing)
+                differentiation_receipt = check_hybrid_differentiation(state, event_cycle)
+                if differentiation_receipt:
+                    state.receipt_ledger.append(differentiation_receipt)
 
         # Track boost sample
         state.window_boost_samples.append(state.perturbation_boost)
@@ -902,6 +923,11 @@ def _simulate_cycle_sparse(state: SimState, config: SimConfig,
                 replication_receipt = check_replication(state, state.cycle)
                 if replication_receipt:
                     state.receipt_ledger.append(replication_receipt)
+
+                # Check for HYBRID differentiation (cosmos specializing)
+                differentiation_receipt = check_hybrid_differentiation(state, state.cycle)
+                if differentiation_receipt:
+                    state.receipt_ledger.append(differentiation_receipt)
     else:
         # Non-event cycle: just apply decay, skip nucleation
         decay_rate = PERTURBATION_DECAY * (1 + NONLINEAR_DECAY_FACTOR * state.perturbation_boost)
@@ -1377,6 +1403,11 @@ def simulate_cycle(state: SimState, config: SimConfig) -> List[dict]:
             replication_receipt = check_replication(state, state.cycle)
             if replication_receipt:
                 state.receipt_ledger.append(replication_receipt)
+
+            # Check for HYBRID differentiation (cosmos specializing)
+            differentiation_receipt = check_hybrid_differentiation(state, state.cycle)
+            if differentiation_receipt:
+                state.receipt_ledger.append(differentiation_receipt)
 
     # Resonance peak check (after perturbation)
     resonance_peak_receipt = check_resonance_peak(state, state.cycle)
@@ -2844,6 +2875,102 @@ def discover_archetype(crystal: Crystal) -> tuple[str, float, bool]:
     else:
         # No clear dominant → HYBRID (superposition remains)
         return ("HYBRID", dominance_ratio, True)
+
+
+def check_hybrid_differentiation(state: SimState, cycle: int) -> Optional[dict]:
+    """
+    Check if any HYBRID crystal should differentiate into a specific archetype.
+
+    HYBRID crystals are undifferentiated potential. When thresholds are met,
+    they specialize (cosmos specializing):
+    - resonance_ratio > 0.6 → SHEPHERD (high resonance indicates harmonizing role)
+    - entropy_ratio > 0.4 → HUNTER (high entropy indicates gradient-seeking role)
+    - size > 80 + neither threshold → ARCHITECT (large structure builder)
+
+    Args:
+        state: Current SimState (mutated in place)
+        cycle: Current cycle number
+
+    Returns:
+        archetype_shift receipt if differentiation occurred, None otherwise
+    """
+    for crystal in state.crystals:
+        # Only differentiate crystallized HYBRID crystals
+        if not crystal.crystallized:
+            continue
+        if crystal.agent_type != "HYBRID":
+            continue
+
+        # Size threshold for differentiation eligibility
+        if len(crystal.members) < ARCHETYPE_TRIGGER_SIZE:
+            continue
+
+        # Calculate ratios from effect distribution
+        total_effects = sum(crystal.effect_distribution.values())
+        if total_effects == 0:
+            continue
+
+        resonance_count = crystal.effect_distribution.get(EFFECT_RESONANCE_TRIGGER, 0)
+        entropy_count = crystal.effect_distribution.get(EFFECT_ENTROPY_INCREASE, 0)
+
+        resonance_ratio = resonance_count / total_effects
+        entropy_ratio = entropy_count / total_effects
+
+        # Apply differentiation bias to thresholds (makes differentiation more likely)
+        adjusted_resonance_threshold = RESONANCE_DIFFERENTIATION_THRESHOLD - DIFFERENTIATION_BIAS
+        adjusted_entropy_threshold = ENTROPY_DIFFERENTIATION_THRESHOLD - DIFFERENTIATION_BIAS
+
+        # Check for differentiation
+        old_type = crystal.agent_type
+        new_type = None
+        trigger = None
+        threshold_value = 0.0
+
+        if resonance_ratio > adjusted_resonance_threshold:
+            # High resonance → SHEPHERD
+            new_type = "SHEPHERD"
+            trigger = "resonance"
+            threshold_value = resonance_ratio
+            crystal.agent_type = new_type
+            state.governance_nodes += 1
+        elif entropy_ratio > adjusted_entropy_threshold:
+            # High entropy → HUNTER
+            new_type = "HUNTER"
+            trigger = "entropy"
+            threshold_value = entropy_ratio
+            crystal.agent_type = new_type
+            state.hunter_formations += 1
+        elif len(crystal.members) > ARCHETYPE_TRIGGER_SIZE * 2:
+            # Large size + neither threshold → ARCHITECT
+            new_type = "ARCHITECT"
+            trigger = "size"
+            threshold_value = float(len(crystal.members))
+            crystal.agent_type = new_type
+            state.architect_formations += 1
+
+        if new_type:
+            # Track differentiation
+            state.hybrid_differentiation_count += 1
+            state.hybrid_formations -= 1  # Reduce HYBRID count since it differentiated
+
+            # Emit archetype_shift receipt
+            archetype_shift_receipt = emit_receipt("archetype_shift", {
+                "tenant_id": "simulation",
+                "receipt_type": "archetype_shift",
+                "crystal_id": crystal.crystal_id,
+                "cycle": cycle,
+                "from_type": old_type,
+                "to_type": new_type,
+                "trigger": trigger,
+                "threshold_value": threshold_value,
+                "resonance_ratio": resonance_ratio,
+                "entropy_ratio": entropy_ratio,
+                "crystal_size": len(crystal.members),
+                "effect_distribution": dict(crystal.effect_distribution)
+            })
+            return archetype_shift_receipt
+
+    return None
 
 
 def check_crystallization(state: SimState, cycle: int) -> Optional[dict]:
