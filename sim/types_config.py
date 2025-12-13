@@ -19,6 +19,12 @@ class SimConfig:
     random_seed: int = 42
     hitl_auto_approve_rate: float = 0.8
     scenario_name: str = "BASELINE"
+    # Fitness variance inheritance strategy (per Grok recommendation)
+    # "INHERIT" = preserve adaptive history for autocatalysis depth
+    # "RESET" = promote exploration in high-entropy scenarios
+    variance_inheritance: str = "INHERIT"
+    inherit_variance_decay: float = 0.95  # Prevents runaway variance amplification
+    reset_variance_prior: float = 0.1  # Uninformed prior variance for RESET mode
 
 
 # =============================================================================
@@ -77,4 +83,44 @@ SCENARIO_GODEL = SimConfig(
     resource_budget=1.0,
     random_seed=47,
     scenario_name="GODEL"
+)
+
+# =============================================================================
+# VARIANCE INHERITANCE SCENARIOS (Per Grok recommendation: test both)
+# =============================================================================
+
+SCENARIO_VARIANCE_INHERIT = SimConfig(
+    n_cycles=1000,
+    n_initial_patterns=5,
+    wound_rate=0.1,
+    resource_budget=1.0,
+    random_seed=48,
+    scenario_name="VARIANCE_INHERIT",
+    variance_inheritance="INHERIT",
+    inherit_variance_decay=0.95,
+    reset_variance_prior=0.1
+)
+
+SCENARIO_VARIANCE_RESET = SimConfig(
+    n_cycles=1000,
+    n_initial_patterns=5,
+    wound_rate=0.1,
+    resource_budget=1.0,
+    random_seed=49,
+    scenario_name="VARIANCE_RESET",
+    variance_inheritance="RESET",
+    inherit_variance_decay=0.95,
+    reset_variance_prior=0.1
+)
+
+SCENARIO_VARIANCE_MULTIVERSE = SimConfig(
+    n_cycles=1000,
+    n_initial_patterns=5,
+    wound_rate=0.1,
+    resource_budget=1.0,
+    random_seed=50,
+    scenario_name="VARIANCE_MULTIVERSE",
+    variance_inheritance="INHERIT",  # Will switch every 100 cycles in simulation
+    inherit_variance_decay=0.95,
+    reset_variance_prior=0.1
 )

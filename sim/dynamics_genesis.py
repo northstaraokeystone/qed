@@ -15,7 +15,12 @@ from receipt_completeness import receipt_completeness_check, godel_layer
 
 from .constants import PatternState
 from .types_config import SimConfig
-from .types_state import SimState
+from .types_state import SimState, FitnessDistribution
+from .variance import (
+    inherit_variance,
+    distribution_from_pattern,
+    apply_distribution_to_pattern,
+)
 
 
 def simulate_wound(state: SimState, wound_type: str) -> dict:
@@ -49,11 +54,11 @@ def simulate_wound(state: SimState, wound_type: str) -> dict:
 
 def simulate_recombination(state: SimState, config: SimConfig) -> None:
     """
-    Attempt pattern recombination.
+    Attempt pattern recombination with fitness variance inheritance.
 
     Args:
         state: Current SimState (mutated in place)
-        config: SimConfig with parameters
+        config: SimConfig with parameters (includes variance_inheritance strategy)
     """
     if len(state.active_patterns) < 2:
         return
@@ -65,20 +70,48 @@ def simulate_recombination(state: SimState, config: SimConfig) -> None:
         state.receipt_ledger.append(recombination_receipt)
 
         offspring_id = recombination_receipt["offspring_id"]
+
+        # Extract parent fitness distributions
+        # Handle SUPERPOSITION edge case: if one parent is in different state, use live parent only
+        parent_a_state = pattern_a.get("state", PatternState.ACTIVE.value)
+        parent_b_state = pattern_b.get("state", PatternState.ACTIVE.value)
+
+        parent_distributions = []
+        if parent_a_state == PatternState.ACTIVE.value:
+            parent_distributions.append(distribution_from_pattern(pattern_a))
+        if parent_b_state == PatternState.ACTIVE.value:
+            parent_distributions.append(distribution_from_pattern(pattern_b))
+
+        # If both parents are not active (edge case), use both anyway
+        if not parent_distributions:
+            parent_distributions = [
+                distribution_from_pattern(pattern_a),
+                distribution_from_pattern(pattern_b)
+            ]
+
+        # Apply variance inheritance strategy
+        offspring_dist, variance_receipt = inherit_variance(
+            parent_distributions=parent_distributions,
+            config=config,
+            offspring_id=offspring_id,
+            cycle=state.cycle
+        )
+        state.receipt_ledger.append(variance_receipt)
+
         offspring = {
             "pattern_id": offspring_id,
             "origin": "recombination",
             "receipts": [],
             "tenant_id": "simulation",
-            "fitness": (pattern_a.get("fitness", 0.5) + pattern_b.get("fitness", 0.5)) / 2,
-            "fitness_mean": (pattern_a.get("fitness_mean", 0.5) + pattern_b.get("fitness_mean", 0.5)) / 2,
-            "fitness_var": 0.1,
             "domain": pattern_a.get("domain", "unknown"),
             "problem_type": pattern_a.get("problem_type", "operational"),
             "prev_coherence": 0.0,
             "state": PatternState.ACTIVE.value,
             "virtual_lifespan": 0
         }
+
+        # Apply inherited fitness distribution to offspring
+        apply_distribution_to_pattern(offspring, offspring_dist)
 
         if random.random() < 0.7:
             offspring["receipts"].append({
@@ -96,18 +129,23 @@ def simulate_recombination(state: SimState, config: SimConfig) -> None:
                     "parent_b": pattern_b["pattern_id"],
                     "offspring_id": offspring_id,
                     "viable": True,
-                    "cycle": state.cycle
+                    "cycle": state.cycle,
+                    "variance_strategy": config.variance_inheritance,
+                    "offspring_lineage_depth": offspring_dist.lineage_depth
                 })
                 state.receipt_ledger.append(receipt)
 
 
 def simulate_genesis(state: SimState, config: SimConfig) -> None:
     """
-    Check for automation gaps and synthesize blueprints.
+    Check for automation gaps and synthesize blueprints with fitness variance inheritance.
+
+    Genesis patterns are created by ARCHITECT from wound patterns - they have
+    no genetic parents, so they use an uninformed prior distribution.
 
     Args:
         state: Current SimState (mutated in place)
-        config: SimConfig with parameters
+        config: SimConfig with parameters (includes variance_inheritance strategy)
     """
     if len(state.wound_history) < 5:
         return
@@ -121,20 +159,39 @@ def simulate_genesis(state: SimState, config: SimConfig) -> None:
             receipts_before = state.receipt_ledger.copy()
 
             offspring_id = f"genesis_{state.cycle}"
+
+            # Genesis patterns have no parents - use uninformed prior
+            # Apply variance inheritance to determine initial fitness distribution
+            genesis_prior = FitnessDistribution(
+                mean=0.6,  # Genesis patterns start with modest positive fitness
+                variance=0.1,
+                n_samples=1,
+                lineage_depth=0
+            )
+
+            offspring_dist, variance_receipt = inherit_variance(
+                parent_distributions=[genesis_prior],
+                config=config,
+                offspring_id=offspring_id,
+                cycle=state.cycle
+            )
+            state.receipt_ledger.append(variance_receipt)
+
             pattern = {
                 "pattern_id": offspring_id,
                 "origin": "genesis",
                 "receipts": [],
                 "tenant_id": "simulation",
-                "fitness": 0.6,
-                "fitness_mean": 0.6,
-                "fitness_var": 0.1,
                 "domain": "automation",
                 "problem_type": gap.get("problem_type", "operational"),
                 "prev_coherence": 0.0,
                 "state": PatternState.ACTIVE.value,
                 "virtual_lifespan": 0
             }
+
+            # Apply inherited fitness distribution to pattern
+            apply_distribution_to_pattern(pattern, offspring_dist)
+
             pattern["receipts"].append({
                 "receipt_type": "agent_decision",
                 "pattern_id": pattern["pattern_id"],
@@ -158,7 +215,9 @@ def simulate_genesis(state: SimState, config: SimConfig) -> None:
                 "H_before": H_before,
                 "H_after": H_after,
                 "n_receipts": n_receipts,
-                "cycle": state.cycle
+                "cycle": state.cycle,
+                "variance_strategy": config.variance_inheritance,
+                "offspring_lineage_depth": offspring_dist.lineage_depth
             })
             state.receipt_ledger.append(birth_receipt)
 

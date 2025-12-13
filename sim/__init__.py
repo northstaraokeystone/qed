@@ -16,8 +16,12 @@ from .types_config import (
     SCENARIO_SINGULARITY,
     SCENARIO_THERMODYNAMIC,
     SCENARIO_GODEL,
+    # Variance inheritance scenarios (per Grok recommendation)
+    SCENARIO_VARIANCE_INHERIT,
+    SCENARIO_VARIANCE_RESET,
+    SCENARIO_VARIANCE_MULTIVERSE,
 )
-from .types_state import SimState, Seed, Beacon, Counselor, Crystal
+from .types_state import SimState, Seed, Beacon, Counselor, Crystal, FitnessDistribution
 from .types_result import SimResult
 
 # =============================================================================
@@ -134,6 +138,17 @@ from .nucleation_evolution import (
 )
 
 # =============================================================================
+# VARIANCE INHERITANCE
+# =============================================================================
+from .variance import (
+    variance_entropy,
+    pooled_variance,
+    inherit_variance,
+    distribution_from_pattern,
+    apply_distribution_to_pattern,
+)
+
+# =============================================================================
 # EXPORT
 # =============================================================================
 from .export import (
@@ -157,6 +172,7 @@ __all__ = [
     "Beacon",
     "Counselor",
     "Crystal",
+    "FitnessDistribution",
     # Scenario presets
     "SCENARIO_BASELINE",
     "SCENARIO_STRESS",
@@ -164,6 +180,10 @@ __all__ = [
     "SCENARIO_SINGULARITY",
     "SCENARIO_THERMODYNAMIC",
     "SCENARIO_GODEL",
+    # Variance inheritance scenarios
+    "SCENARIO_VARIANCE_INHERIT",
+    "SCENARIO_VARIANCE_RESET",
+    "SCENARIO_VARIANCE_MULTIVERSE",
     # Constants
     "PatternState",
     "RECEIPT_SCHEMA",
@@ -225,6 +245,12 @@ __all__ = [
     "check_replication",
     "check_hybrid_differentiation",
     "evolve_seeds",
+    # Variance inheritance
+    "variance_entropy",
+    "pooled_variance",
+    "inherit_variance",
+    "distribution_from_pattern",
+    "apply_distribution_to_pattern",
     # Export
     "export_to_grok",
     "generate_report",

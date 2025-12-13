@@ -78,6 +78,53 @@ class Crystal:
 
 
 # =============================================================================
+# FITNESS DISTRIBUTION DATACLASS
+# =============================================================================
+
+@dataclass
+class FitnessDistribution:
+    """Encapsulates pattern fitness as a distribution for Thompson sampling.
+
+    Per Grok recommendation: fitness variance IS entropy - it represents
+    information about adaptive history. Inheriting variance preserves this
+    information; resetting it exports entropy (increases exploration).
+
+    Attributes:
+        mean: Expected fitness value (point estimate)
+        variance: Uncertainty in fitness estimate (minimum 0.001 to prevent degenerate distributions)
+        n_samples: Number of fitness measurements that informed this distribution
+        lineage_depth: Inheritance generations (resets to 0 on RESET mode)
+    """
+    mean: float = 0.5
+    variance: float = 0.1
+    n_samples: int = 1
+    lineage_depth: int = 0
+
+    # Variance floor to prevent degenerate distributions (Thompson sampling needs uncertainty)
+    VARIANCE_FLOOR: float = 0.001
+
+    def __post_init__(self):
+        """Ensure variance floor is respected."""
+        if self.variance < self.VARIANCE_FLOOR:
+            object.__setattr__(self, 'variance', self.VARIANCE_FLOOR)
+
+    def entropy(self) -> float:
+        """Shannon entropy of this distribution (differential entropy for continuous).
+
+        For a Gaussian approximation: H = 0.5 * log2(2 * pi * e * variance)
+
+        Returns:
+            Entropy in bits
+        """
+        import math
+        # Differential entropy of Gaussian: 0.5 * ln(2*pi*e*var)
+        # Convert to bits: divide by ln(2)
+        if self.variance <= 0:
+            return 0.0
+        return 0.5 * math.log2(2 * math.pi * math.e * self.variance)
+
+
+# =============================================================================
 # SIMSTATE DATACLASS
 # =============================================================================
 
