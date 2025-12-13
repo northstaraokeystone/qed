@@ -53,10 +53,10 @@ CRITICALITY_PHASE_TRANSITION = 1.0  # The quantum leap point
 ALERT_COOLDOWN_CYCLES = 50  # Prevent alert spam near threshold
 
 # Perturbation constants (stochastic GW kicks) — tuned via Grok analysis
-PERTURBATION_PROBABILITY = 0.6   # 60% chance per cycle (more frequent events = more measurements)
-PERTURBATION_MAGNITUDE = 0.32    # size of kick (stronger kicks)
-PERTURBATION_DECAY = 0.2         # kick decays 20% per cycle (slower decay)
-PERTURBATION_VARIANCE = 0.75     # chaotic variance in magnitude (amplified chaos)
+PERTURBATION_PROBABILITY = 0.7   # 70% chance per cycle (more frequent events = more measurements)
+PERTURBATION_MAGNITUDE = 0.38    # size of kick (stronger kicks)
+PERTURBATION_DECAY = 0.12        # kick decays 12% per cycle (slower decay)
+PERTURBATION_VARIANCE = 0.85     # chaotic variance in magnitude (amplified chaos)
 BASIN_ESCAPE_THRESHOLD = 0.2     # escape detection threshold (higher bar)
 CLUSTER_LAMBDA = 3               # Poisson parameter for cluster size (avg 3 kicks per event)
 MAX_CLUSTER_SIZE = 5             # Safety cap on cluster size (prevent explosion)
@@ -129,8 +129,17 @@ ENTROPY_SURGE_THRESHOLD = 0.1  # surge detection threshold (measurement event)
 # HYBRID differentiation constants (cosmos specializing)
 RESONANCE_DIFFERENTIATION_THRESHOLD = 0.6  # HYBRID + resonance > 0.6 → SHEPHERD
 ENTROPY_DIFFERENTIATION_THRESHOLD = 0.4    # HYBRID + entropy > 0.4 → HUNTER
+SYMMETRY_DIFFERENTIATION_THRESHOLD = 0.5   # HYBRID + symmetry > 0.5 → ARCHITECT
 DIFFERENTIATION_BIAS = 0.2                  # probability boost for differentiation check
-ARCHETYPE_TRIGGER_SIZE = 40                 # minimum size for differentiation eligibility
+ARCHETYPE_TRIGGER_SIZE = 55                 # minimum size for differentiation eligibility
+
+# Quantum ARCHITECT mechanisms — tunneling + entanglement
+FIX_AMPLIFIER = 0.3              # general fix amplifier
+SYMMETRY_BIAS = 0.25             # symmetry capture boost (parallel to GOVERNANCE_BIAS and ENTROPY_AMPLIFIER)
+TUNNELING_CONSTANT = 0.1         # barrier penetration factor for quantum tunneling
+TUNNELING_FLOOR = 0.3            # minimum symmetry ratio to attempt tunnel
+ENTANGLEMENT_FACTOR = 0.1        # deficit boost multiplier for entanglement correction
+EXPECTED_ARCHITECTS = 1          # target for entanglement calculation
 
 # Effect types for archetype discovery (wave function collapse)
 EFFECT_ENTROPY_INCREASE = "ENTROPY_INCREASE"
@@ -332,6 +341,10 @@ class SimState:
     # Kick distribution tracking fields (uniform ticket printer verification)
     kick_distribution: Dict[str, int] = field(default_factory=lambda: {"ENTROPY_INCREASE": 0, "RESONANCE_TRIGGER": 0, "SYMMETRY_BREAK": 0})  # count kicks by effect
     first_capture_distribution: Dict[str, int] = field(default_factory=lambda: {"HUNTER": 0, "SHEPHERD": 0, "ARCHITECT": 0})  # count first captures by archetype
+    # Quantum ARCHITECT tracking fields (tunneling + entanglement)
+    tunneling_events: int = 0  # successful quantum tunneling events
+    entanglement_boosts: int = 0  # times entanglement deficit correction applied
+    hunter_delays: int = 0  # times HUNTER check was deferred for ARCHITECT (proves priority reorder)
 
 
 @dataclass(frozen=True)
@@ -403,7 +416,11 @@ def run_multiverse(n_universes: int, n_cycles: int, base_seed: int = 42) -> dict
         "total_equilibrium": 0.0,
         # Kick distribution tracking (uniform ticket printer verification)
         "total_kick_distribution": {"ENTROPY_INCREASE": 0, "RESONANCE_TRIGGER": 0, "SYMMETRY_BREAK": 0},
-        "total_first_capture_distribution": {"HUNTER": 0, "SHEPHERD": 0, "ARCHITECT": 0}
+        "total_first_capture_distribution": {"HUNTER": 0, "SHEPHERD": 0, "ARCHITECT": 0},
+        # Quantum ARCHITECT tracking (tunneling + entanglement)
+        "total_tunneling_events": 0,
+        "total_entanglement_boosts": 0,
+        "total_hunter_delays": 0
     }
 
     for i in range(n_universes):
@@ -448,7 +465,11 @@ def run_multiverse(n_universes: int, n_cycles: int, base_seed: int = 42) -> dict
             "equilibrium_score": result.final_state.equilibrium_score,
             # Kick distribution tracking (uniform ticket printer verification)
             "kick_distribution": dict(result.final_state.kick_distribution),
-            "first_capture_distribution": dict(result.final_state.first_capture_distribution)
+            "first_capture_distribution": dict(result.final_state.first_capture_distribution),
+            # Quantum ARCHITECT tracking (tunneling + entanglement)
+            "tunneling_events": result.final_state.tunneling_events,
+            "entanglement_boosts": result.final_state.entanglement_boosts,
+            "hunter_delays": result.final_state.hunter_delays
         })
 
         # Aggregate statistics
@@ -481,6 +502,10 @@ def run_multiverse(n_universes: int, n_cycles: int, base_seed: int = 42) -> dict
             aggregated_stats["total_kick_distribution"][effect] = aggregated_stats["total_kick_distribution"].get(effect, 0) + count
         for archetype, count in result.final_state.first_capture_distribution.items():
             aggregated_stats["total_first_capture_distribution"][archetype] = aggregated_stats["total_first_capture_distribution"].get(archetype, 0) + count
+        # Quantum ARCHITECT aggregation (tunneling + entanglement)
+        aggregated_stats["total_tunneling_events"] += result.final_state.tunneling_events
+        aggregated_stats["total_entanglement_boosts"] += result.final_state.entanglement_boosts
+        aggregated_stats["total_hunter_delays"] += result.final_state.hunter_delays
         if result.statistics["completeness_achieved"]:
             aggregated_stats["completeness_achieved_count"] += 1
         if result.final_state.structure_formed:
@@ -2660,14 +2685,19 @@ def counselor_compete(state: SimState, kick_receipt: dict, kick_phase: float,
         # Base similarity from counselor_score
         similarity = counselor_score(counselor, seed, kick_phase, kick_resonant, kick_direction)
 
-        # Apply governance bias for resonant kicks → boosts SHEPHERD births
+        # Apply archetype-specific biases to boost births
         if kick_resonant:
+            # RESONANCE_TRIGGER kicks → boosts SHEPHERD births
             similarity += GOVERNANCE_BIAS
         else:
-            # Apply entropy amplifier for ENTROPY_INCREASE kicks → boosts HUNTER births
-            # ENTROPY_INCREASE = not resonant AND not symmetry breaking interference
+            # Check for interference to determine effect type
             interference_type = kick_receipt.get("interference_type", "neutral")
-            if interference_type not in ("constructive", "destructive"):
+            if interference_type in ("constructive", "destructive"):
+                # SYMMETRY_BREAK kicks → boosts ARCHITECT births
+                similarity += SYMMETRY_BIAS
+            else:
+                # ENTROPY_INCREASE kicks → boosts HUNTER births
+                # ENTROPY_INCREASE = not resonant AND not symmetry breaking interference
                 similarity += ENTROPY_AMPLIFIER
 
         # Apply autocatalysis amplification for crystallized crystals
@@ -2877,6 +2907,68 @@ def discover_archetype(crystal: Crystal) -> tuple[str, float, bool]:
         return ("HYBRID", dominance_ratio, True)
 
 
+def calculate_entanglement_boost(state: SimState) -> float:
+    """
+    Calculate entanglement boost for ARCHITECT formation.
+
+    When there's a deficit of ARCHITECTs compared to expected count,
+    the universe self-corrects by lowering the effective threshold.
+    This is quantum entanglement: system-level correction mechanism.
+
+    Args:
+        state: Current SimState
+
+    Returns:
+        float: Boost to apply (lowers effective threshold)
+    """
+    architect_deficit = max(0, EXPECTED_ARCHITECTS - state.architect_formations)
+    boost = architect_deficit * ENTANGLEMENT_FACTOR
+
+    if boost > 0:
+        state.entanglement_boosts += 1
+
+    return boost
+
+
+def check_architect_tunneling(crystal, symmetry_ratio: float, state: SimState) -> bool:
+    """
+    Check if ARCHITECT can form via quantum tunneling.
+
+    Tunneling allows symmetry > TUNNELING_FLOOR (0.3) to penetrate
+    the SYMMETRY_DIFFERENTIATION_THRESHOLD (0.5) barrier.
+    Not gradual evolution — quantum leap.
+
+    Args:
+        crystal: Crystal being checked
+        symmetry_ratio: Current symmetry ratio
+        state: Current SimState (for tracking)
+
+    Returns:
+        bool: True if tunneling succeeded
+    """
+    import math
+    import random
+
+    # Too low — can't tunnel
+    if symmetry_ratio < TUNNELING_FLOOR:
+        return False
+
+    # Already above threshold — no tunnel needed
+    if symmetry_ratio >= SYMMETRY_DIFFERENTIATION_THRESHOLD:
+        return False
+
+    # Calculate barrier height and tunneling probability
+    barrier = SYMMETRY_DIFFERENTIATION_THRESHOLD - symmetry_ratio
+    tunneling_probability = math.exp(-barrier / TUNNELING_CONSTANT)
+
+    # Quantum tunneling attempt
+    if random.random() < tunneling_probability:
+        state.tunneling_events += 1
+        return True
+
+    return False
+
+
 def check_hybrid_differentiation(state: SimState, cycle: int) -> Optional[dict]:
     """
     Check if any HYBRID crystal should differentiate into a specific archetype.
@@ -2884,8 +2976,13 @@ def check_hybrid_differentiation(state: SimState, cycle: int) -> Optional[dict]:
     HYBRID crystals are undifferentiated potential. When thresholds are met,
     they specialize (cosmos specializing):
     - resonance_ratio > 0.6 → SHEPHERD (high resonance indicates harmonizing role)
+    - symmetry_ratio > 0.5 → ARCHITECT (high symmetry indicates structure building) [CHECKED BEFORE HUNTER]
+    - quantum tunneling (symmetry > 0.3) → ARCHITECT (barrier penetration)
     - entropy_ratio > 0.4 → HUNTER (high entropy indicates gradient-seeking role)
-    - size > 80 + neither threshold → ARCHITECT (large structure builder)
+    - size > 110 + no other threshold → ARCHITECT (large structure builder, fallback)
+
+    CRITICAL: ARCHITECT (symmetry) is checked BEFORE HUNTER to prevent threshold theft.
+    Entanglement boost lowers ARCHITECT threshold when there's a deficit.
 
     Args:
         state: Current SimState (mutated in place)
@@ -2894,6 +2991,9 @@ def check_hybrid_differentiation(state: SimState, cycle: int) -> Optional[dict]:
     Returns:
         archetype_shift receipt if differentiation occurred, None otherwise
     """
+    # Calculate entanglement boost (universe self-corrects for ARCHITECT deficit)
+    entanglement_boost = calculate_entanglement_boost(state)
+
     for crystal in state.crystals:
         # Only differentiate crystallized HYBRID crystals
         if not crystal.crystallized:
@@ -2912,20 +3012,26 @@ def check_hybrid_differentiation(state: SimState, cycle: int) -> Optional[dict]:
 
         resonance_count = crystal.effect_distribution.get(EFFECT_RESONANCE_TRIGGER, 0)
         entropy_count = crystal.effect_distribution.get(EFFECT_ENTROPY_INCREASE, 0)
+        symmetry_count = crystal.effect_distribution.get(EFFECT_SYMMETRY_BREAK, 0)
 
         resonance_ratio = resonance_count / total_effects
         entropy_ratio = entropy_count / total_effects
+        symmetry_ratio = symmetry_count / total_effects
 
         # Apply differentiation bias to thresholds (makes differentiation more likely)
         adjusted_resonance_threshold = RESONANCE_DIFFERENTIATION_THRESHOLD - DIFFERENTIATION_BIAS
         adjusted_entropy_threshold = ENTROPY_DIFFERENTIATION_THRESHOLD - DIFFERENTIATION_BIAS
+        # Apply entanglement boost to ARCHITECT threshold (universe self-correction)
+        adjusted_symmetry_threshold = SYMMETRY_DIFFERENTIATION_THRESHOLD - DIFFERENTIATION_BIAS - entanglement_boost
 
         # Check for differentiation
         old_type = crystal.agent_type
         new_type = None
         trigger = None
         threshold_value = 0.0
+        tunneled = False
 
+        # PRIORITY ORDER: SHEPHERD → ARCHITECT (symmetry/tunneling) → HUNTER → ARCHITECT (size)
         if resonance_ratio > adjusted_resonance_threshold:
             # High resonance → SHEPHERD
             new_type = "SHEPHERD"
@@ -2933,15 +3039,32 @@ def check_hybrid_differentiation(state: SimState, cycle: int) -> Optional[dict]:
             threshold_value = resonance_ratio
             crystal.agent_type = new_type
             state.governance_nodes += 1
+        elif symmetry_ratio > adjusted_symmetry_threshold:
+            # High symmetry → ARCHITECT (CRITICAL: checked BEFORE HUNTER)
+            new_type = "ARCHITECT"
+            trigger = "symmetry"
+            threshold_value = symmetry_ratio
+            crystal.agent_type = new_type
+            state.architect_formations += 1
+        elif check_architect_tunneling(crystal, symmetry_ratio, state):
+            # Quantum tunneling → ARCHITECT (barrier penetration)
+            new_type = "ARCHITECT"
+            trigger = "tunneling"
+            threshold_value = symmetry_ratio
+            tunneled = True
+            crystal.agent_type = new_type
+            state.architect_formations += 1
         elif entropy_ratio > adjusted_entropy_threshold:
-            # High entropy → HUNTER
+            # High entropy → HUNTER (CRITICAL: checked AFTER ARCHITECT)
             new_type = "HUNTER"
             trigger = "entropy"
             threshold_value = entropy_ratio
             crystal.agent_type = new_type
             state.hunter_formations += 1
+            # Track that we checked ARCHITECT first (proves priority reorder works)
+            state.hunter_delays += 1
         elif len(crystal.members) > ARCHETYPE_TRIGGER_SIZE * 2:
-            # Large size + neither threshold → ARCHITECT
+            # Large size + no other threshold → ARCHITECT (fallback)
             new_type = "ARCHITECT"
             trigger = "size"
             threshold_value = float(len(crystal.members))
@@ -2965,6 +3088,9 @@ def check_hybrid_differentiation(state: SimState, cycle: int) -> Optional[dict]:
                 "threshold_value": threshold_value,
                 "resonance_ratio": resonance_ratio,
                 "entropy_ratio": entropy_ratio,
+                "symmetry_ratio": symmetry_ratio,
+                "entanglement_boost": entanglement_boost,
+                "tunneled": tunneled,
                 "crystal_size": len(crystal.members),
                 "effect_distribution": dict(crystal.effect_distribution)
             })
