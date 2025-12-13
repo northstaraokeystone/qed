@@ -1,5 +1,5 @@
 """
-sim/state.py - SimState and Nucleation Dataclasses
+sim/types_state.py - SimState and Nucleation Dataclasses
 
 Mutable simulation state and quantum nucleation structures.
 CLAUDEME v3.1 Compliant: Dataclasses for state, pure functions.

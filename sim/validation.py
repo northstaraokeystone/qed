@@ -12,7 +12,7 @@ from entropy import emit_receipt
 from .constants import (
     TOLERANCE_FLOOR, TOLERANCE_CEILING, ENTROPY_HISTORY_WINDOW
 )
-from .state import SimState
+from .types_state import SimState
 from .measurement import measure_state, measure_observation_cost
 
 

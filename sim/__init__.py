@@ -5,8 +5,10 @@ Public API for v12 simulation dynamics.
 CLAUDEME v3.1 Compliant: Flat, focused files. One file = one responsibility.
 """
 
-# Dataclasses
-from .config import (
+# =============================================================================
+# TYPES (Dataclasses)
+# =============================================================================
+from .types_config import (
     SimConfig,
     SCENARIO_BASELINE,
     SCENARIO_STRESS,
@@ -15,10 +17,12 @@ from .config import (
     SCENARIO_THERMODYNAMIC,
     SCENARIO_GODEL,
 )
-from .state import SimState, Seed, Beacon, Counselor, Crystal
-from .result import SimResult
+from .types_state import SimState, Seed, Beacon, Counselor, Crystal
+from .types_result import SimResult
 
-# Constants
+# =============================================================================
+# CONSTANTS
+# =============================================================================
 from .constants import (
     PatternState,
     RECEIPT_SCHEMA,
@@ -28,7 +32,9 @@ from .constants import (
     PLANCK_ENTROPY_BASE,
 )
 
-# Core functions
+# =============================================================================
+# CORE SIMULATION
+# =============================================================================
 from .cycle import (
     run_simulation,
     run_multiverse,
@@ -36,14 +42,20 @@ from .cycle import (
     simulate_cycle,
 )
 
-# Dynamics
-from .dynamics import (
-    simulate_wound,
+# =============================================================================
+# DYNAMICS
+# =============================================================================
+from .dynamics_lifecycle import (
     simulate_autocatalysis,
     simulate_selection,
+)
+from .dynamics_genesis import (
+    simulate_wound,
     simulate_recombination,
     simulate_genesis,
     simulate_completeness,
+)
+from .dynamics_quantum import (
     simulate_superposition,
     simulate_measurement,
     wavefunction_collapse,
@@ -52,14 +64,18 @@ from .dynamics import (
     bound_violation_check,
 )
 
-# Validation
+# =============================================================================
+# VALIDATION
+# =============================================================================
 from .validation import (
     validate_conservation,
     detect_hidden_risk,
     compute_tolerance,
 )
 
-# Measurement
+# =============================================================================
+# MEASUREMENT
+# =============================================================================
 from .measurement import (
     measure_state,
     measure_observation_cost,
@@ -67,11 +83,15 @@ from .measurement import (
     measure_genesis,
 )
 
-# Vacuum and emergence
-from .vacuum import (
+# =============================================================================
+# VACUUM
+# =============================================================================
+from .vacuum_fluctuation import (
     vacuum_fluctuation,
     attempt_spontaneous_emergence,
     process_virtual_patterns,
+)
+from .vacuum_flux import (
     compute_hawking_flux,
     compute_collapse_rate,
     compute_emergence_rate,
@@ -79,26 +99,43 @@ from .vacuum import (
     emit_hawking_entropy,
 )
 
-# Perturbation
-from .perturbation import (
+# =============================================================================
+# PERTURBATION
+# =============================================================================
+from .perturbation_core import (
     check_perturbation,
     check_basin_escape,
     check_resonance_peak,
+)
+from .perturbation_tracking import (
     check_structure_formation,
+    track_baseline_shift,
+    check_evolution_window,
+    check_cluster_persistence,
+    check_proto_form,
+    check_symmetry_break,
 )
 
-# Nucleation
-from .nucleation import (
+# =============================================================================
+# NUCLEATION
+# =============================================================================
+from .nucleation_seeds import (
     initialize_nucleation,
     counselor_compete,
     counselor_capture,
+)
+from .nucleation_crystals import (
     check_crystallization,
+)
+from .nucleation_evolution import (
     check_replication,
     check_hybrid_differentiation,
     evolve_seeds,
 )
 
-# Export
+# =============================================================================
+# EXPORT
+# =============================================================================
 from .export import (
     export_to_grok,
     generate_report,
@@ -108,8 +145,11 @@ from .export import (
     plot_genealogy,
 )
 
+# =============================================================================
+# PUBLIC API
+# =============================================================================
 __all__ = [
-    # Dataclasses
+    # Types
     "SimConfig",
     "SimState",
     "SimResult",
@@ -131,7 +171,7 @@ __all__ = [
     "TOLERANCE_CEILING",
     "PLANCK_ENTROPY",
     "PLANCK_ENTROPY_BASE",
-    # Core functions
+    # Core simulation
     "run_simulation",
     "run_multiverse",
     "initialize_state",
@@ -172,6 +212,11 @@ __all__ = [
     "check_basin_escape",
     "check_resonance_peak",
     "check_structure_formation",
+    "track_baseline_shift",
+    "check_evolution_window",
+    "check_cluster_persistence",
+    "check_proto_form",
+    "check_symmetry_break",
     # Nucleation
     "initialize_nucleation",
     "counselor_compete",

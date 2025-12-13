@@ -12,70 +12,32 @@ from entropy import emit_receipt
 from receipt_completeness import level_coverage
 from autoimmune import GERMLINE_PATTERNS
 
-from .constants import (
-    PatternState, PERTURBATION_DECAY, NONLINEAR_DECAY_FACTOR,
-    ENTROPY_SURGE_THRESHOLD
-)
-from .config import SimConfig
-from .state import SimState
-from .result import SimResult
+from .constants import PatternState, ENTROPY_SURGE_THRESHOLD
+from .types_config import SimConfig
+from .types_state import SimState
+from .types_result import SimResult
 from .measurement import measure_state, measure_observation_cost, measure_boundary_crossing, measure_genesis
-from .vacuum import (
-    vacuum_fluctuation, attempt_spontaneous_emergence, process_virtual_patterns,
+from .vacuum_fluctuation import (
+    vacuum_fluctuation, attempt_spontaneous_emergence, process_virtual_patterns
+)
+from .vacuum_flux import (
     compute_hawking_flux, compute_collapse_rate, compute_emergence_rate,
     compute_system_criticality, check_criticality_alert, check_phase_transition,
-    estimate_cycles_to_transition
+    emit_hawking_flux_receipt
 )
-from .perturbation import (
-    check_perturbation, check_basin_escape, check_resonance_peak,
-    check_structure_formation, track_baseline_shift, check_evolution_window,
-    check_cluster_persistence, check_proto_form, check_symmetry_break
+from .perturbation_core import check_perturbation, check_basin_escape, check_resonance_peak
+from .perturbation_tracking import (
+    track_baseline_shift, check_evolution_window, check_cluster_persistence,
+    check_proto_form, check_symmetry_break, check_structure_formation
 )
-from .nucleation import (
-    initialize_nucleation, counselor_compete, counselor_capture,
-    check_crystallization, check_replication, check_hybrid_differentiation, evolve_seeds
-)
-from .dynamics import (
-    simulate_wound, simulate_autocatalysis, simulate_selection,
-    simulate_recombination, simulate_genesis, simulate_completeness
+from .nucleation_seeds import initialize_nucleation, counselor_compete, counselor_capture
+from .nucleation_crystals import check_crystallization
+from .nucleation_evolution import check_replication, check_hybrid_differentiation, evolve_seeds
+from .dynamics_lifecycle import simulate_autocatalysis, simulate_selection
+from .dynamics_genesis import (
+    simulate_wound, simulate_recombination, simulate_genesis, simulate_completeness
 )
 from .validation import validate_conservation, emit_entropy_state_receipt
-
-
-def emit_hawking_flux_receipt(state: SimState, cycle: int, flux: float,
-                              trend: str, collapse_rate: float,
-                              emergence_rate: float, criticality: float,
-                              entropy_delta: float, criticality_rate: float) -> dict:
-    """Emit hawking_flux receipt with rate metrics."""
-    criticality_alert_active = criticality > 0.95
-    cycles_to_transition = estimate_cycles_to_transition(criticality, criticality_rate)
-    escape_probability = state.escape_count / max(cycle, 1)
-    current_decay_rate = PERTURBATION_DECAY * (1 + NONLINEAR_DECAY_FACTOR * state.perturbation_boost)
-
-    return emit_receipt("hawking_flux", {
-        "tenant_id": "simulation",
-        "cycle": cycle,
-        "hawking_emissions_this_cycle": state.hawking_emissions_this_cycle,
-        "hawking_flux": flux,
-        "flux_trend": trend,
-        "collapse_rate": collapse_rate,
-        "emergence_rate": emergence_rate,
-        "system_criticality": criticality,
-        "flux_history_length": len(state.flux_history),
-        "entropy_delta": entropy_delta,
-        "criticality_alert_active": criticality_alert_active,
-        "cycles_to_transition": cycles_to_transition,
-        "perturbation_boost": state.perturbation_boost,
-        "current_decay_rate": current_decay_rate,
-        "effective_criticality": criticality + state.perturbation_boost,
-        "horizon_crossings": state.horizon_crossings,
-        "escape_count": state.escape_count,
-        "escape_probability": escape_probability,
-        "consecutive_escapes": state.consecutive_escapes,
-        "max_consecutive_escapes": state.max_consecutive_escapes,
-        "cycles_since_crossing": state.cycles_since_crossing,
-        "adaptive_triggers": state.adaptive_triggers
-    })
 
 
 def initialize_state(config: SimConfig) -> SimState:
@@ -269,7 +231,9 @@ def simulate_cycle(state: SimState, config: SimConfig) -> List[dict]:
         state.receipt_ledger.append(perturbation_receipt)
         state.window_perturbations += 1
 
-        persistent_cluster_receipt = check_cluster_persistence(state, perturbation_receipt["receipt_type"], state.cycle)
+        persistent_cluster_receipt = check_cluster_persistence(
+            state, perturbation_receipt["receipt_type"], state.cycle
+        )
         if persistent_cluster_receipt:
             state.receipt_ledger.append(persistent_cluster_receipt)
 

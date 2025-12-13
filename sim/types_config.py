@@ -1,5 +1,5 @@
 """
-sim/config.py - SimConfig Dataclass and Scenario Presets
+sim/types_config.py - SimConfig Dataclass and Scenario Presets
 
 Immutable configuration for simulation runs.
 CLAUDEME v3.1 Compliant: Frozen dataclass, no behavior.

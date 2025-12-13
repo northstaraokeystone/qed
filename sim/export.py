@@ -7,7 +7,7 @@ CLAUDEME v3.1 Compliant: Pure functions.
 
 import json
 
-from .result import SimResult
+from .types_result import SimResult
 
 
 def plot_population_dynamics(result: SimResult) -> None:
