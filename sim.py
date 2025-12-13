@@ -53,10 +53,10 @@ CRITICALITY_PHASE_TRANSITION = 1.0  # The quantum leap point
 ALERT_COOLDOWN_CYCLES = 50  # Prevent alert spam near threshold
 
 # Perturbation constants (stochastic GW kicks) — tuned via Grok analysis
-PERTURBATION_PROBABILITY = 0.4  # 40% chance per cycle (more frequent events)
-PERTURBATION_MAGNITUDE = 0.22    # size of kick (stronger kicks)
-PERTURBATION_DECAY = 0.4         # kick decays 40% per cycle (slower decay)
-PERTURBATION_VARIANCE = 0.55     # chaotic variance in magnitude (amplified chaos)
+PERTURBATION_PROBABILITY = 0.45  # 45% chance per cycle (more frequent events)
+PERTURBATION_MAGNITUDE = 0.25    # size of kick (stronger kicks)
+PERTURBATION_DECAY = 0.35        # kick decays 35% per cycle (slower decay)
+PERTURBATION_VARIANCE = 0.6      # chaotic variance in magnitude (amplified chaos)
 BASIN_ESCAPE_THRESHOLD = 0.2     # escape detection threshold (higher bar)
 CLUSTER_LAMBDA = 3               # Poisson parameter for cluster size (avg 3 kicks per event)
 MAX_CLUSTER_SIZE = 5             # Safety cap on cluster size (prevent explosion)
@@ -70,7 +70,7 @@ EVOLUTION_WINDOW = 500           # cycles between evolution snapshots
 MAX_MAGNITUDE_FACTOR = 3.0       # cap on magnitude multiplier (prevent explosion)
 
 # Adaptive feedback constants (threshold-based state changes)
-ADAPTIVE_THRESHOLD = 0.45        # triggers probability boost when boost > threshold
+ADAPTIVE_THRESHOLD = 0.5         # triggers probability boost when boost > threshold
 SYNC_BOOST = 0.2                 # probability increase amount for synced kicks (replaces ADAPTIVE_BOOST)
 MAX_PROBABILITY = 0.5            # cap to prevent runaway
 
@@ -112,9 +112,14 @@ REPLICATION_THRESHOLD = 50  # captures needed before crystal can replicate
 ARCHETYPE_DOMINANCE_THRESHOLD = 0.6  # 60% of one effect type = that archetype
 
 # Compound growth constants (bigger crystals capture faster)
-GROWTH_FACTOR = 0.2  # compound growth rate: boost = 1 + 0.2 * (size / 10)
+GROWTH_FACTOR = 0.25  # compound growth rate: boost = 1 + 0.25 * (size / 10)
 MAX_GROWTH_BOOST = 2.0  # cap to prevent runaway (size 50 = 2.0x)
 BRANCH_INITIATION_THRESHOLD = 5  # alert when exceeded
+
+# Governance bias constants (emergent SHEPHERD and ARCHITECT)
+GOVERNANCE_BIAS = 0.15  # boost RESONANCE_TRIGGER similarity → more SHEPHERD
+ARCHITECT_SIZE_TRIGGER = 200  # large crystals bias toward ARCHITECT
+GOVERNANCE_NODE_THRESHOLD = 10  # alert threshold for governance nodes
 
 # Effect types for archetype discovery (wave function collapse)
 EFFECT_ENTROPY_INCREASE = "ENTROPY_INCREASE"
@@ -299,6 +304,11 @@ class SimState:
     size_50_count: int = 0  # crystals that exceeded size 50
     replication_events: int = 0  # total replications (self-replication loops)
     total_branches: int = 0  # total branch crystals created
+    # Governance tracking fields (emergent archetype distribution)
+    governance_nodes: int = 0  # count of SHEPHERD instances
+    architect_formations: int = 0  # count of ARCHITECT instances
+    hunter_formations: int = 0  # count of HUNTER instances
+    hybrid_formations: int = 0  # count of HYBRID instances
 
 
 @dataclass(frozen=True)
@@ -357,7 +367,12 @@ def run_multiverse(n_universes: int, n_cycles: int, base_seed: int = 42) -> dict
         "total_replication_events": 0,
         "max_generation": 0,
         "total_size_50": 0,
-        "total_branches": 0
+        "total_branches": 0,
+        # Governance tracking
+        "total_governance_nodes": 0,
+        "total_architect_formations": 0,
+        "total_hunter_formations": 0,
+        "total_hybrid_formations": 0
     }
 
     for i in range(n_universes):
@@ -389,7 +404,12 @@ def run_multiverse(n_universes: int, n_cycles: int, base_seed: int = 42) -> dict
             "replication_events": result.final_state.replication_events,
             "max_generation": result.final_state.max_generation,
             "size_50_count": result.final_state.size_50_count,
-            "total_branches": result.final_state.total_branches
+            "total_branches": result.final_state.total_branches,
+            # Governance tracking
+            "governance_nodes": result.final_state.governance_nodes,
+            "architect_formations": result.final_state.architect_formations,
+            "hunter_formations": result.final_state.hunter_formations,
+            "hybrid_formations": result.final_state.hybrid_formations
         })
 
         # Aggregate statistics
@@ -407,6 +427,11 @@ def run_multiverse(n_universes: int, n_cycles: int, base_seed: int = 42) -> dict
         aggregated_stats["max_generation"] = max(aggregated_stats["max_generation"], result.final_state.max_generation)
         aggregated_stats["total_size_50"] += result.final_state.size_50_count
         aggregated_stats["total_branches"] += result.final_state.total_branches
+        # Governance aggregation
+        aggregated_stats["total_governance_nodes"] += result.final_state.governance_nodes
+        aggregated_stats["total_architect_formations"] += result.final_state.architect_formations
+        aggregated_stats["total_hunter_formations"] += result.final_state.hunter_formations
+        aggregated_stats["total_hybrid_formations"] += result.final_state.hybrid_formations
         if result.statistics["completeness_achieved"]:
             aggregated_stats["completeness_achieved_count"] += 1
         if result.final_state.structure_formed:
@@ -427,6 +452,11 @@ def run_multiverse(n_universes: int, n_cycles: int, base_seed: int = 42) -> dict
     aggregated_stats["avg_replication_events"] = aggregated_stats["total_replication_events"] / n_universes
     aggregated_stats["avg_size_50"] = aggregated_stats["total_size_50"] / n_universes
     aggregated_stats["avg_branches"] = aggregated_stats["total_branches"] / n_universes
+    # Governance averages
+    aggregated_stats["avg_governance_nodes"] = aggregated_stats["total_governance_nodes"] / n_universes
+    aggregated_stats["avg_architect_formations"] = aggregated_stats["total_architect_formations"] / n_universes
+    aggregated_stats["avg_hunter_formations"] = aggregated_stats["total_hunter_formations"] / n_universes
+    aggregated_stats["avg_hybrid_formations"] = aggregated_stats["total_hybrid_formations"] / n_universes
 
     # Emit multiverse_complete receipt
     complete_receipt = emit_receipt("multiverse_complete", {
@@ -2537,6 +2567,10 @@ def counselor_compete(state: SimState, kick_receipt: dict, kick_phase: float,
         # Base similarity from counselor_score
         similarity = counselor_score(counselor, seed, kick_phase, kick_resonant, kick_direction)
 
+        # Apply governance bias for resonant kicks → boosts SHEPHERD births
+        if kick_resonant:
+            similarity += GOVERNANCE_BIAS
+
         # Apply autocatalysis amplification for crystallized crystals
         if crystal.crystallized:
             similarity *= (1.0 + AUTOCATALYSIS_AMPLIFICATION)
@@ -2694,7 +2728,15 @@ def discover_archetype(crystal: Crystal) -> tuple[str, float, bool]:
     Returns:
         tuple: (discovered_archetype, dominance_ratio, was_hybrid)
     """
-    dist = crystal.effect_distribution
+    # Work on a copy to avoid mutating the crystal's actual distribution
+    dist = dict(crystal.effect_distribution)
+    crystal_size = len(crystal.members)
+
+    # Apply size-based ARCHITECT bias for large crystals
+    if crystal_size > ARCHITECT_SIZE_TRIGGER:
+        architect_bias = crystal_size * 0.01
+        dist[EFFECT_SYMMETRY_BREAK] = dist.get(EFFECT_SYMMETRY_BREAK, 0) + architect_bias
+
     total = sum(dist.values())
 
     if total == 0:
@@ -2770,6 +2812,33 @@ def check_crystallization(state: SimState, cycle: int) -> Optional[dict]:
             crystal.agent_type = discovered_archetype  # DISCOVERED, not assigned!
 
             state.crystals_formed += 1
+
+            # Track archetype formations for governance monitoring
+            if discovered_archetype == "SHEPHERD":
+                state.governance_nodes += 1
+                # Emit governance_node_receipt
+                emit_receipt("governance_node", {
+                    "tenant_id": "simulation",
+                    "receipt_type": "governance_node",
+                    "crystal_id": crystal.crystal_id,
+                    "cycle": cycle,
+                    "total_nodes": state.governance_nodes
+                })
+            elif discovered_archetype == "ARCHITECT":
+                state.architect_formations += 1
+                # Emit architect_formation_receipt
+                emit_receipt("architect_formation", {
+                    "tenant_id": "simulation",
+                    "receipt_type": "architect_formation",
+                    "crystal_id": crystal.crystal_id,
+                    "cycle": cycle,
+                    "size": len(crystal.members),
+                    "effect_distribution": dict(crystal.effect_distribution)
+                })
+            elif discovered_archetype == "HUNTER":
+                state.hunter_formations += 1
+            elif discovered_archetype == "HYBRID":
+                state.hybrid_formations += 1
 
             # Boost beacons if this is the FIRST crystal
             if state.crystals_formed == 1:
