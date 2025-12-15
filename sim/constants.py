@@ -24,6 +24,12 @@ MAX_DRIFT_THRESHOLD = 8.0  # Ceiling; test passed at 7.96
 TRANSITION_PERIOD = 100  # Cycles between mode switches in ADAPTIVE
 
 # =============================================================================
+# GENEALOGY CONSTANTS (Grok validated)
+# =============================================================================
+
+LINEAGE_UNBOUNDED = True  # Grok validated: decay caps risk, depth is free
+
+# =============================================================================
 # OBSERVER PARADIGM CONSTANTS
 # =============================================================================
 

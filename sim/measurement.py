@@ -83,3 +83,42 @@ def measure_genesis(initial_patterns: list) -> float:
 
     result = system_entropy(initial_pattern_receipts)
     return max(result, PLANCK_ENTROPY)
+
+
+def lineage_depth(pattern_id: str, genealogy: dict) -> int:
+    """
+    Calculate lineage depth by traversing parent chain to root.
+
+    Unbounded traversal - LINEAGE_UNBOUNDED = True (Grok validated).
+    VARIANCE_DECAY prevents amplification, depth limit unnecessary.
+
+    Args:
+        pattern_id: Pattern identifier
+        genealogy: Dict mapping pattern_id -> parent_id (None for roots)
+
+    Returns:
+        int: Lineage depth (0 = root/no parents, N = N generations from root)
+
+    Examples:
+        >>> genealogy = {'D': 'C', 'C': 'B', 'B': 'A', 'A': None}
+        >>> lineage_depth('D', genealogy)
+        3
+        >>> lineage_depth('A', genealogy)
+        0
+    """
+    if pattern_id not in genealogy:
+        return 0
+
+    depth = 0
+    current_id = pattern_id
+    visited = set()  # Cycle detection
+
+    while current_id in genealogy and genealogy[current_id] is not None:
+        if current_id in visited:
+            # Cycle detected - should not happen in valid genealogy
+            break
+        visited.add(current_id)
+        current_id = genealogy[current_id]
+        depth += 1
+
+    return depth

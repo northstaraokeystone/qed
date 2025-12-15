@@ -194,6 +194,28 @@ Read this to understand:
 
 ---
 
+## 9. Unbounded Lineage: Why decay caps risk, not depth
+
+**Old model (implicit):** Genealogical chains need depth caps to prevent unbounded growth. Lineage traversal might need `MAX_LINEAGE_DEPTH` limit. Deep genealogies risk exponential memory or amplification of noise across generations.
+
+**New model:** `LINEAGE_UNBOUNDED = True` (Grok validated). No `MAX_LINEAGE_DEPTH` cap enforced. `lineage_depth(pattern_id, genealogy)` traverses parent chain to root without limit. `VARIANCE_DECAY = 0.95` is the safety mechanism—variance diminishes with each generation, preventing amplification regardless of depth. Deep genealogies preserve more adaptive history without risk. Expanded exploration enabled—patterns can inherit from arbitrarily deep ancestor chains. The decay IS the bound; depth is free.
+
+**Why this matters:** Amplification risk resolved by decay constant. With `VARIANCE_DECAY = 0.95`, each generation reduces inherited variance by 5%. After 10 generations: 0.95^10 ≈ 0.60. After 50 generations: 0.95^50 ≈ 0.08. Deep lineages naturally converge to stable variance floor—no secondary cap needed. The deeper the genealogy, the more refined the fitness distribution. Longer chains accumulate more adaptive history without exponential growth. Unbounded is intentional design, not oversight. Pattern mating can draw from full evolutionary history—no artificial truncation of useful ancestor data.
+
+**The shift:** From depth-limited genealogy to decay-governed inheritance—thermodynamics caps risk, depth preserves history.
+
+**Implications:**
+- `VARIANCE_DECAY = 0.95` prevents amplification—exponential damping ensures convergence regardless of lineage length
+- No `MAX_LINEAGE_DEPTH` cap needed—decay is sufficient safety mechanism; depth limit would discard adaptive history
+- `lineage_depth()` utility traverses to root—unbounded queries enable full genealogical analysis
+- Deeper genealogies = more recombination opportunity—longer chains provide richer pattern space for mating
+- Design decision locked—Grok validated: "proceed with unbounded lineage for expanded exploration"
+- Expanded exploration enabled—no artificial truncation of evolutionary memory
+
+**Source:** constants.py:26-30, measurement.py:88-124, Grok validation 2025-12-15
+
+---
+
 ## The Reproductive Stage: From Organism to Species
 
 V10 CELLULAR gave the system sensation (entropy measurement via `system_entropy()`), healing (SHEPHERD fixes wounds), and self-measurement (fitness tracks health). The system could **sense** disorder and **respond** to it.
@@ -225,6 +247,7 @@ The progression is developmental:
 | Entropy-Governed Population | Physics-based cap replaces arbitrary AGENT_CAP=20; river doesn't count whirlpools | population.py |
 | Simulation-First Validation | No feature ships without Monte Carlo proof; 6 scenarios cover all failure modes | sim.py |
 | Entropy Conservation | 2nd law exposes hidden risk; agents must export disorder; physics always wins | population.py |
+| Unbounded Lineage Depth | No MAX_LINEAGE_DEPTH cap; decay caps risk, expanded exploration preserves adaptive history | constants.py, measurement.py |
 
 ---
 
