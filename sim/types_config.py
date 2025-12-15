@@ -125,3 +125,33 @@ SCENARIO_VARIANCE_MULTIVERSE = SimConfig(
     inherit_variance_decay=0.95,
     reset_variance_prior=0.1
 )
+
+# =============================================================================
+# CROSS-DOMAIN RECOMBINATION SCENARIO (Grok 500-cycle validation)
+# =============================================================================
+
+SCENARIO_CROSS_DOMAIN = SimConfig(
+    n_cycles=500,
+    n_initial_patterns=5,
+    wound_rate=0.1,
+    resource_budget=1.0,
+    random_seed=51,
+    scenario_name="CROSS_DOMAIN",
+    variance_inheritance="INHERIT",
+    inherit_variance_decay=0.95,
+    reset_variance_prior=0.1
+)
+
+# =============================================================================
+# MANDATORY SCENARIOS LIST (7 total)
+# =============================================================================
+
+MANDATORY_SCENARIOS = [
+    "BASELINE",
+    "STRESS",
+    "GENESIS",
+    "SINGULARITY",
+    "THERMODYNAMIC",
+    "GODEL",
+    "CROSS_DOMAIN",
+]

@@ -259,6 +259,15 @@ The progression is developmental:
 - **Implication:** Generation 12 is diagnostic marker for healthy emergence
 - **Constant:** ADAPTIVE_PEAK_GENERATION = 12
 
+### Cross-Domain Recombination Validated
+- **Finding:** 15% avg fitness uplift, emergence accelerated Gen-12 → Gen-10
+- **Source:** Grok 500-cycle sim with affinity matrix
+- **Constant:** ADAPTIVE_PEAK_GENERATION_CROSS = 10
+- **Matrix:** 5 domains, 10 pairs, physics-based affinities
+- **New pair:** Neuralink×Boring = 0.6 ("infra-neuro")
+- **Scenario:** SCENARIO_CROSS_DOMAIN added to MANDATORY_SCENARIOS (now 7 total)
+- **Optimization target:** delta < 0.001% (AFFINITY_OPTIMIZATION_THRESHOLD = 0.00001)
+
 ---
 
 ## Risks

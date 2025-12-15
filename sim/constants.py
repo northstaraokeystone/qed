@@ -24,6 +24,36 @@ MAX_DRIFT_THRESHOLD = 8.0  # Ceiling; test passed at 7.96
 TRANSITION_PERIOD = 100  # Cycles between mode switches in ADAPTIVE
 MIN_VARIANCE = 0.09  # Grok validated: "converges to 0.09 floor"
 ADAPTIVE_PEAK_GENERATION = 12  # Grok: "Adaptive peaks at gen 12"
+ADAPTIVE_PEAK_GENERATION_CROSS = 10  # Grok: cross-domain accelerates emergence Gen-12 → Gen-10
+
+# =============================================================================
+# AFFINITY OPTIMIZATION CONSTANTS (Grok validated)
+# =============================================================================
+
+AFFINITY_OPTIMIZATION_THRESHOLD = 0.00001  # Convergence target for tuning (delta < 0.001%)
+
+# =============================================================================
+# DOMAIN AFFINITY MATRIX (Grok 500-cycle cross-domain validation)
+# 5 domains: tesla, spacex, starlink, boring, neuralink
+# 10 pairs with physics-based affinities
+# =============================================================================
+
+DOMAIN_AFFINITY_MATRIX = {
+    # Tesla pairs
+    ("tesla", "spacex"): 0.7,      # Battery thermal, vehicle dynamics
+    ("tesla", "starlink"): 0.5,    # Comms, link quality
+    ("tesla", "boring"): 0.4,      # Infrastructure, tunneling vehicles
+    ("tesla", "neuralink"): 0.3,   # Low overlap (vehicles vs neural)
+    # SpaceX pairs
+    ("spacex", "starlink"): 0.8,   # Orbital systems, comms
+    ("spacex", "boring"): 0.3,     # Low overlap (space vs underground)
+    ("spacex", "neuralink"): 0.2,  # Minimal overlap
+    # Starlink pairs
+    ("starlink", "boring"): 0.2,   # Minimal overlap
+    ("starlink", "neuralink"): 0.4,  # Signal processing, data transmission
+    # Boring-Neuralink pair
+    ("boring", "neuralink"): 0.6,  # Grok: "infra-neuro"
+}
 
 # =============================================================================
 # GENEALOGY CONSTANTS (Grok validated)
