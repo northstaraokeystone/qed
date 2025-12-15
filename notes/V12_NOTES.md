@@ -251,6 +251,16 @@ The progression is developmental:
 
 ---
 
+## Grok Validations
+
+### Gen-12 Emergence Peak
+- **Finding:** Adaptive fitness peaks at generation 12
+- **Source:** Grok 500-cycle sim with unbounded depth
+- **Implication:** Generation 12 is diagnostic marker for healthy emergence
+- **Constant:** ADAPTIVE_PEAK_GENERATION = 12
+
+---
+
 ## Risks
 
 ### RESOLVED: Variance Amplification

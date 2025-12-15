@@ -22,6 +22,8 @@ ENTROPY_HISTORY_WINDOW = 20  # Cycles for variance calculation
 VARIANCE_DECAY = 0.95  # Grok validated: 1000 cycles, 0 violations
 MAX_DRIFT_THRESHOLD = 8.0  # Ceiling; test passed at 7.96
 TRANSITION_PERIOD = 100  # Cycles between mode switches in ADAPTIVE
+MIN_VARIANCE = 0.09  # Grok validated: "converges to 0.09 floor"
+ADAPTIVE_PEAK_GENERATION = 12  # Grok: "Adaptive peaks at gen 12"
 
 # =============================================================================
 # GENEALOGY CONSTANTS (Grok validated)
