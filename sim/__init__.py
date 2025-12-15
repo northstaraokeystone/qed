@@ -20,6 +20,9 @@ from .types_config import (
     SCENARIO_VARIANCE_INHERIT,
     SCENARIO_VARIANCE_RESET,
     SCENARIO_VARIANCE_MULTIVERSE,
+    # Cross-domain recombination scenario (Grok 500-cycle validation)
+    SCENARIO_CROSS_DOMAIN,
+    MANDATORY_SCENARIOS,
 )
 from .types_state import SimState, Seed, Beacon, Counselor, Crystal, FitnessDistribution
 from .types_result import SimResult
@@ -34,6 +37,11 @@ from .constants import (
     TOLERANCE_CEILING,
     PLANCK_ENTROPY,
     PLANCK_ENTROPY_BASE,
+    # Cross-domain constants (Grok validated)
+    ADAPTIVE_PEAK_GENERATION,
+    ADAPTIVE_PEAK_GENERATION_CROSS,
+    AFFINITY_OPTIMIZATION_THRESHOLD,
+    DOMAIN_AFFINITY_MATRIX,
 )
 
 # =============================================================================
@@ -58,6 +66,7 @@ from .dynamics_genesis import (
     simulate_recombination,
     simulate_genesis,
     simulate_completeness,
+    get_domain_affinity,
 )
 from .dynamics_quantum import (
     simulate_superposition,
@@ -184,6 +193,9 @@ __all__ = [
     "SCENARIO_VARIANCE_INHERIT",
     "SCENARIO_VARIANCE_RESET",
     "SCENARIO_VARIANCE_MULTIVERSE",
+    # Cross-domain scenario
+    "SCENARIO_CROSS_DOMAIN",
+    "MANDATORY_SCENARIOS",
     # Constants
     "PatternState",
     "RECEIPT_SCHEMA",
@@ -191,6 +203,11 @@ __all__ = [
     "TOLERANCE_CEILING",
     "PLANCK_ENTROPY",
     "PLANCK_ENTROPY_BASE",
+    # Cross-domain constants
+    "ADAPTIVE_PEAK_GENERATION",
+    "ADAPTIVE_PEAK_GENERATION_CROSS",
+    "AFFINITY_OPTIMIZATION_THRESHOLD",
+    "DOMAIN_AFFINITY_MATRIX",
     # Core simulation
     "run_simulation",
     "run_multiverse",
@@ -203,6 +220,7 @@ __all__ = [
     "simulate_recombination",
     "simulate_genesis",
     "simulate_completeness",
+    "get_domain_affinity",
     "simulate_superposition",
     "simulate_measurement",
     "wavefunction_collapse",

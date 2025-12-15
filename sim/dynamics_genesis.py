@@ -13,7 +13,7 @@ from architect import identify_automation_gaps, synthesize_blueprint
 from recombine import recombine, mate_selection
 from receipt_completeness import receipt_completeness_check, godel_layer
 
-from .constants import PatternState
+from .constants import PatternState, DOMAIN_AFFINITY_MATRIX
 from .types_config import SimConfig
 from .types_state import SimState, FitnessDistribution
 from .variance import (
@@ -21,6 +21,37 @@ from .variance import (
     distribution_from_pattern,
     apply_distribution_to_pattern,
 )
+
+
+def get_domain_affinity(domain_a: str, domain_b: str) -> float:
+    """
+    Get affinity between two domains from the DOMAIN_AFFINITY_MATRIX.
+
+    Symmetric lookup: (a,b) == (b,a)
+    Same domain: returns 1.0 (implicit)
+
+    Args:
+        domain_a: First domain name (lowercase)
+        domain_b: Second domain name (lowercase)
+
+    Returns:
+        float: Affinity value 0.0-1.0
+    """
+    # Same domain = full affinity
+    if domain_a == domain_b:
+        return 1.0
+
+    # Normalize to lowercase
+    a, b = domain_a.lower(), domain_b.lower()
+
+    # Try both orderings for symmetric lookup
+    if (a, b) in DOMAIN_AFFINITY_MATRIX:
+        return DOMAIN_AFFINITY_MATRIX[(a, b)]
+    if (b, a) in DOMAIN_AFFINITY_MATRIX:
+        return DOMAIN_AFFINITY_MATRIX[(b, a)]
+
+    # Unknown pair: return minimal affinity
+    return 0.1
 
 
 def simulate_wound(state: SimState, wound_type: str) -> dict:
