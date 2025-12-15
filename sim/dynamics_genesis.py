@@ -13,7 +13,7 @@ from architect import identify_automation_gaps, synthesize_blueprint
 from recombine import recombine, mate_selection
 from receipt_completeness import receipt_completeness_check, godel_layer
 
-from .constants import PatternState, DOMAIN_AFFINITY_MATRIX
+from .constants import PatternState, DOMAIN_AFFINITY_MATRIX, AFFINITY_STOCHASTIC_VARIANCE
 from .types_config import SimConfig
 from .types_state import SimState, FitnessDistribution
 from .variance import (
@@ -23,7 +23,7 @@ from .variance import (
 )
 
 
-def get_domain_affinity(domain_a: str, domain_b: str) -> float:
+def get_domain_affinity(domain_a: str, domain_b: str, stochastic: bool = False) -> float:
     """
     Get affinity between two domains from the DOMAIN_AFFINITY_MATRIX.
 
@@ -33,9 +33,10 @@ def get_domain_affinity(domain_a: str, domain_b: str) -> float:
     Args:
         domain_a: First domain name (lowercase)
         domain_b: Second domain name (lowercase)
+        stochastic: If True, add random variance (default: False for deterministic)
 
     Returns:
-        float: Affinity value 0.0-1.0
+        float: Affinity value 0.0-1.0 (clamped after optional variance)
     """
     # Same domain = full affinity
     if domain_a == domain_b:
@@ -45,13 +46,20 @@ def get_domain_affinity(domain_a: str, domain_b: str) -> float:
     a, b = domain_a.lower(), domain_b.lower()
 
     # Try both orderings for symmetric lookup
+    base_affinity = 0.1  # Default for unknown pairs
     if (a, b) in DOMAIN_AFFINITY_MATRIX:
-        return DOMAIN_AFFINITY_MATRIX[(a, b)]
-    if (b, a) in DOMAIN_AFFINITY_MATRIX:
-        return DOMAIN_AFFINITY_MATRIX[(b, a)]
+        base_affinity = DOMAIN_AFFINITY_MATRIX[(a, b)]
+    elif (b, a) in DOMAIN_AFFINITY_MATRIX:
+        base_affinity = DOMAIN_AFFINITY_MATRIX[(b, a)]
 
-    # Unknown pair: return minimal affinity
-    return 0.1
+    # Apply stochastic variance if enabled
+    if stochastic and AFFINITY_STOCHASTIC_VARIANCE > 0:
+        noise = random.gauss(0, AFFINITY_STOCHASTIC_VARIANCE)
+        affinity = base_affinity + noise
+        # Clamp to [0.0, 1.0]
+        return max(0.0, min(1.0, affinity))
+
+    return base_affinity
 
 
 def simulate_wound(state: SimState, wound_type: str) -> dict:

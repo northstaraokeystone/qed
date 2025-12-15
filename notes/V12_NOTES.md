@@ -268,6 +268,16 @@ The progression is developmental:
 - **Scenario:** SCENARIO_CROSS_DOMAIN added to MANDATORY_SCENARIOS (now 7 total)
 - **Optimization target:** delta < 0.001% (AFFINITY_OPTIMIZATION_THRESHOLD = 0.00001)
 
+### Affinity Threshold Discovered
+- **Finding:** Phase transition at affinity ≈ 0.48
+- **Below:** Hybrids penalize emergence (0.4 → Gen 13.2)
+- **Above:** Hybrids accelerate emergence (0.5 → Gen 11.8, 0.7 → Gen 10.1)
+- **Physics:** Low affinity adds noise > signal
+- **Constant:** MIN_AFFINITY_THRESHOLD = 0.48
+- **Source:** Grok 500-run parameter sweep
+- **Receipt:** affinity_threshold_block_receipt emitted when pair blocked
+- **Stochastic mode:** AFFINITY_STOCHASTIC_VARIANCE = 0.05 (default: unused, deterministic)
+
 ---
 
 ## Risks

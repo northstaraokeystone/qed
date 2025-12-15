@@ -135,6 +135,7 @@ def mate_selection(patterns: List[Dict]) -> List[Tuple[Dict, Dict]]:
     - Similar problem_type (>= COMPATIBILITY_THRESHOLD)
     - Different domain
     - Both have positive fitness
+    - Affinity >= MIN_AFFINITY_THRESHOLD (Grok validated gate)
 
     Args:
         patterns: List of pattern dicts with problem_type, domain, fitness
@@ -142,12 +143,19 @@ def mate_selection(patterns: List[Dict]) -> List[Tuple[Dict, Dict]]:
     Returns:
         list: Tuples of (pattern_a, pattern_b) eligible for mating
     """
+    # Import here to avoid circular dependency
+    from sim.dynamics_genesis import get_domain_affinity
+    from sim.constants import MIN_AFFINITY_THRESHOLD
+
     pairs = []
 
     for i, pattern_a in enumerate(patterns):
         for pattern_b in patterns[i+1:]:
             # Check different domains
-            if pattern_a.get("domain") == pattern_b.get("domain"):
+            domain_a = pattern_a.get("domain")
+            domain_b = pattern_b.get("domain")
+
+            if domain_a == domain_b:
                 continue
 
             # Check positive fitness
@@ -157,8 +165,27 @@ def mate_selection(patterns: List[Dict]) -> List[Tuple[Dict, Dict]]:
             # Check problem_type similarity (simple string match for now)
             type_a = pattern_a.get("problem_type", "")
             type_b = pattern_b.get("problem_type", "")
-            if type_a == type_b:  # Compatible
-                pairs.append((pattern_a, pattern_b))
+            if type_a != type_b:
+                continue
+
+            # Check affinity threshold (Grok validated: below 0.48 adds noise > signal)
+            affinity = get_domain_affinity(domain_a, domain_b)
+            if affinity < MIN_AFFINITY_THRESHOLD:
+                # Emit block receipt
+                emit_receipt("affinity_threshold_block_receipt", {
+                    "tenant_id": pattern_a.get("tenant_id", "default"),
+                    "parent_a_id": pattern_a.get("pattern_id", "unknown"),
+                    "parent_a_domain": domain_a,
+                    "parent_b_id": pattern_b.get("pattern_id", "unknown"),
+                    "parent_b_domain": domain_b,
+                    "affinity_score": affinity,
+                    "threshold": MIN_AFFINITY_THRESHOLD,
+                    "blocked_reason": "affinity below threshold: noise > signal"
+                })
+                continue  # Skip this pair
+
+            # All checks passed - compatible pair
+            pairs.append((pattern_a, pattern_b))
 
     return pairs
 

@@ -31,6 +31,8 @@ ADAPTIVE_PEAK_GENERATION_CROSS = 10  # Grok: cross-domain accelerates emergence 
 # =============================================================================
 
 AFFINITY_OPTIMIZATION_THRESHOLD = 0.00001  # Convergence target for tuning (delta < 0.001%)
+MIN_AFFINITY_THRESHOLD = 0.48  # Minimum affinity for cross-domain breeding (Grok 500-run sweep)
+AFFINITY_STOCHASTIC_VARIANCE = 0.05  # Optional noise on affinity lookup (default: unused, deterministic)
 
 # =============================================================================
 # DOMAIN AFFINITY MATRIX (Grok 500-cycle cross-domain validation)
@@ -229,7 +231,7 @@ EFFECT_TYPES = ["ENTROPY_INCREASE", "RESONANCE_TRIGGER", "SYMMETRY_BREAK"]
 RECEIPT_SCHEMA = [
     "sim_config", "sim_cycle", "sim_birth", "sim_death",
     "sim_mate", "sim_complete", "sim_violation", "sim_result",
-    "drift_check_receipt"
+    "drift_check_receipt", "affinity_threshold_block_receipt"
 ]
 
 
