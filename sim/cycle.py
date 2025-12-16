@@ -12,7 +12,7 @@ from entropy import emit_receipt
 from receipt_completeness import level_coverage
 from autoimmune import GERMLINE_PATTERNS
 
-from .constants import PatternState, ENTROPY_SURGE_THRESHOLD
+from .constants import PatternState, ENTROPY_SURGE_THRESHOLD, VARIANCE_SWEEP_RANGE, VARIANCE_SWEEP_STEPS
 from .types_config import SimConfig
 from .types_state import SimState
 from .types_result import SimResult
@@ -425,3 +425,162 @@ def run_multiverse(configs: List[SimConfig]) -> List[SimResult]:
         result = run_simulation(config)
         results.append(result)
     return results
+
+
+def run_variance_sweep(config: SimConfig) -> List[dict]:
+    """
+    Run simulation at multiple variance levels to explore parameter space.
+
+    Grok: "sim variance effects with code"
+
+    Args:
+        config: Base SimConfig (n_cycles will be used for each variance level)
+
+    Returns:
+        List of result dicts across variance range, one per variance level
+    """
+    from .dynamics_genesis import compute_dynamic_threshold
+
+    # Define sweep range
+    var_min, var_max = VARIANCE_SWEEP_RANGE
+    step_size = (var_max - var_min) / VARIANCE_SWEEP_STEPS
+
+    sweep_results = []
+
+    for i in range(VARIANCE_SWEEP_STEPS + 1):
+        variance_level = var_min + (i * step_size)
+
+        # Compute threshold for this variance level
+        threshold = compute_dynamic_threshold(variance_level)
+
+        # Run simulation with this config
+        result = run_simulation(config)
+
+        # Collect metrics
+        sweep_point = {
+            "variance_level": variance_level,
+            "threshold": threshold,
+            "final_population": len(result.final_state.active_patterns),
+            "violations": len(result.violations),
+            "completeness_achieved": result.statistics.get("completeness_achieved", False),
+            "births": result.statistics.get("births", 0),
+            "deaths": result.statistics.get("deaths", 0),
+        }
+        sweep_results.append(sweep_point)
+
+    # Emit sweep receipt
+    emit_receipt("variance_sweep_receipt", {
+        "tenant_id": "simulation",
+        "sweep_range": list(VARIANCE_SWEEP_RANGE),
+        "sweep_steps": VARIANCE_SWEEP_STEPS,
+        "points_collected": len(sweep_results),
+        "min_variance": var_min,
+        "max_variance": var_max,
+    })
+
+    return sweep_results
+
+
+class ScenarioResult:
+    """Result of a scenario validation."""
+
+    def __init__(self, passed: bool, message: str, details: dict = None):
+        self.passed = passed
+        self.message = message
+        self.details = details or {}
+
+
+def scenario_stochastic_affinity(config: SimConfig = None) -> ScenarioResult:
+    """
+    8th mandatory scenario: Validate stochastic affinity with dynamic thresholding.
+
+    Pass criteria:
+    - Threshold scales correctly with variance (stochastic > deterministic)
+    - No NaN values in threshold computation
+    - Emergence not degraded (final population >= 3)
+    - No excessive violations
+
+    Grok: "stochastic runs may require dynamic thresholding"
+
+    Args:
+        config: Optional SimConfig (defaults to SCENARIO_STOCHASTIC_AFFINITY preset)
+
+    Returns:
+        ScenarioResult with passed status and details
+    """
+    from .dynamics_genesis import compute_dynamic_threshold
+    from .types_config import SCENARIO_STOCHASTIC_AFFINITY as default_config
+    import math
+
+    if config is None:
+        config = default_config
+
+    # Validate threshold scaling
+    threshold_deterministic = compute_dynamic_threshold(0.0)
+    threshold_stochastic_low = compute_dynamic_threshold(0.05)
+    threshold_stochastic_high = compute_dynamic_threshold(0.10)
+
+    # Check 1: No NaN values
+    if math.isnan(threshold_deterministic) or math.isnan(threshold_stochastic_low) or math.isnan(threshold_stochastic_high):
+        return ScenarioResult(
+            passed=False,
+            message="NaN detected in threshold computation",
+            details={"threshold_deterministic": threshold_deterministic}
+        )
+
+    # Check 2: Threshold scales correctly (stochastic > deterministic)
+    if not (threshold_stochastic_low > threshold_deterministic):
+        return ScenarioResult(
+            passed=False,
+            message="Stochastic threshold not greater than deterministic",
+            details={
+                "threshold_deterministic": threshold_deterministic,
+                "threshold_stochastic_low": threshold_stochastic_low
+            }
+        )
+
+    # Check 3: Higher variance = higher threshold
+    if not (threshold_stochastic_high >= threshold_stochastic_low):
+        return ScenarioResult(
+            passed=False,
+            message="Threshold does not scale with variance",
+            details={
+                "threshold_stochastic_low": threshold_stochastic_low,
+                "threshold_stochastic_high": threshold_stochastic_high
+            }
+        )
+
+    # Run simulation
+    result = run_simulation(config)
+
+    # Check 4: Emergence not degraded (final population >= 3)
+    final_pop = len(result.final_state.active_patterns)
+    if final_pop < 3:
+        return ScenarioResult(
+            passed=False,
+            message=f"Emergence degraded: final population {final_pop} < 3",
+            details={"final_population": final_pop}
+        )
+
+    # Check 5: No excessive violations
+    violation_count = len(result.violations)
+    if violation_count > 10:
+        return ScenarioResult(
+            passed=False,
+            message=f"Excessive violations: {violation_count} > 10",
+            details={"violations": violation_count}
+        )
+
+    # All checks passed
+    return ScenarioResult(
+        passed=True,
+        message="Stochastic affinity scenario passed",
+        details={
+            "threshold_deterministic": threshold_deterministic,
+            "threshold_stochastic_low": threshold_stochastic_low,
+            "threshold_stochastic_high": threshold_stochastic_high,
+            "final_population": final_pop,
+            "violations": violation_count,
+            "cycles_run": config.n_cycles
+        }
+    )

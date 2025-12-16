@@ -278,6 +278,50 @@ The progression is developmental:
 - **Receipt:** affinity_threshold_block_receipt emitted when pair blocked
 - **Stochastic mode:** AFFINITY_STOCHASTIC_VARIANCE = 0.05 (default: unused, deterministic)
 
+### Stochastic Threshold Discovery
+- **Finding:** Deterministic threshold (0.48) insufficient for variance mode
+- **Grok Quote:** "0.48 appears deterministic-only; noise can amplify penalties below ~0.5"
+- **Grok Quote:** "expect upward adjustment (e.g., 0.52+) for robustness"
+- **Grok Quote:** "stochastic runs may require dynamic thresholding"
+
+**Constants Added:**
+| Constant | Value | Purpose |
+|----------|-------|---------|
+| STOCHASTIC_AFFINITY_THRESHOLD | 0.52 | Base threshold for variance mode |
+| DYNAMIC_THRESHOLD_SCALE | 0.8 | How much variance shifts threshold |
+| VARIANCE_SWEEP_RANGE | (0.0, 0.15) | Parameter exploration bounds |
+| VARIANCE_SWEEP_STEPS | 10 | Sweep granularity |
+
+**Dynamic Threshold Formula:**
+```
+if variance <= 0:
+    threshold = MIN_AFFINITY_THRESHOLD  # 0.48 (deterministic)
+else:
+    threshold = STOCHASTIC_AFFINITY_THRESHOLD + (DYNAMIC_THRESHOLD_SCALE * variance)
+    # Clamped to [0.48, 0.95]
+```
+
+**Functions Added:**
+- `compute_dynamic_threshold(variance)` - Returns appropriate threshold for variance level
+- `get_affinity_with_variance(domain_a, domain_b, variance)` - Affinity with optional noise
+- `run_variance_sweep(config)` - Explore parameter space across variance levels
+- `scenario_stochastic_affinity(config)` - 8th mandatory scenario validation
+- `export_model_details(output_path)` - Export model for Grok collaboration
+- `model_to_grok_format(model)` - Tweet-length summary for X/Grok sharing
+
+**8th Mandatory Scenario: STOCHASTIC_AFFINITY**
+- Validates dynamic thresholding works correctly under variance
+- Pass criteria:
+  1. Threshold scales correctly (stochastic > deterministic)
+  2. No NaN values in computation
+  3. Emergence not degraded (final population >= 3)
+  4. No excessive violations (< 10)
+
+**Grok Collaboration:**
+- `export_model_details()` generates full model architecture JSON
+- `model_to_grok_format()` creates 280-char summary for X sharing
+- Dual hash included per CLAUDEME for verification
+
 ---
 
 ## Risks

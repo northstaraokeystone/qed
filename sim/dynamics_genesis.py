@@ -13,7 +13,14 @@ from architect import identify_automation_gaps, synthesize_blueprint
 from recombine import recombine, mate_selection
 from receipt_completeness import receipt_completeness_check, godel_layer
 
-from .constants import PatternState, DOMAIN_AFFINITY_MATRIX, AFFINITY_STOCHASTIC_VARIANCE
+from .constants import (
+    PatternState,
+    DOMAIN_AFFINITY_MATRIX,
+    AFFINITY_STOCHASTIC_VARIANCE,
+    MIN_AFFINITY_THRESHOLD,
+    STOCHASTIC_AFFINITY_THRESHOLD,
+    DYNAMIC_THRESHOLD_SCALE,
+)
 from .types_config import SimConfig
 from .types_state import SimState, FitnessDistribution
 from .variance import (
@@ -55,6 +62,76 @@ def get_domain_affinity(domain_a: str, domain_b: str, stochastic: bool = False) 
     # Apply stochastic variance if enabled
     if stochastic and AFFINITY_STOCHASTIC_VARIANCE > 0:
         noise = random.gauss(0, AFFINITY_STOCHASTIC_VARIANCE)
+        affinity = base_affinity + noise
+        # Clamp to [0.0, 1.0]
+        return max(0.0, min(1.0, affinity))
+
+    return base_affinity
+
+
+def compute_dynamic_threshold(variance: float) -> float:
+    """
+    Compute dynamic affinity threshold that scales with variance.
+
+    When variance=0, returns deterministic threshold (0.48).
+    When variance>0, returns stochastic threshold scaled upward.
+
+    Grok: "noise can amplify penalties below ~0.5; expect upward adjustment"
+    Grok: "stochastic runs may require dynamic thresholding"
+
+    Formula: threshold = base + scale * variance
+    - variance=0: returns MIN_AFFINITY_THRESHOLD (0.48)
+    - variance>0: starts from STOCHASTIC_AFFINITY_THRESHOLD (0.52) and scales up
+    - Clamped to [0.48, 0.95] for reasonable bounds
+
+    Args:
+        variance: Variance level (float >= 0)
+
+    Returns:
+        float: Computed threshold (clamped to [0.48, 0.95])
+    """
+    if variance <= 0:
+        threshold = MIN_AFFINITY_THRESHOLD
+    else:
+        # Start from stochastic base and scale with variance
+        threshold = STOCHASTIC_AFFINITY_THRESHOLD + (DYNAMIC_THRESHOLD_SCALE * variance)
+
+    # Clamp to reasonable bounds
+    # Floor: deterministic threshold (0.48)
+    # Ceiling: 0.95 (must allow some high-affinity pairs)
+    clamped = max(MIN_AFFINITY_THRESHOLD, min(0.95, threshold))
+
+    # Emit receipt per CLAUDEME LAW_1
+    emit_receipt("dynamic_threshold_receipt", {
+        "tenant_id": "simulation",
+        "variance_input": variance,
+        "computed_threshold": clamped,
+        "base_threshold": MIN_AFFINITY_THRESHOLD if variance <= 0 else STOCHASTIC_AFFINITY_THRESHOLD,
+        "scale_factor": DYNAMIC_THRESHOLD_SCALE,
+        "clamped": clamped != threshold
+    })
+
+    return clamped
+
+
+def get_affinity_with_variance(domain_a: str, domain_b: str, variance: float) -> float:
+    """
+    Get affinity between two domains with optional gaussian noise.
+
+    Args:
+        domain_a: First domain name
+        domain_b: Second domain name
+        variance: Variance level for noise (0 = deterministic)
+
+    Returns:
+        float: Affinity value 0.0-1.0 (clamped after optional noise)
+    """
+    # Get base affinity
+    base_affinity = get_domain_affinity(domain_a, domain_b, stochastic=False)
+
+    # Add gaussian noise when variance > 0
+    if variance > 0:
+        noise = random.gauss(0, variance)
         affinity = base_affinity + noise
         # Clamp to [0.0, 1.0]
         return max(0.0, min(1.0, affinity))

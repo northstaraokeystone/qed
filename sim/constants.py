@@ -35,6 +35,17 @@ MIN_AFFINITY_THRESHOLD = 0.48  # Minimum affinity for cross-domain breeding (Gro
 AFFINITY_STOCHASTIC_VARIANCE = 0.05  # Optional noise on affinity lookup (default: unused, deterministic)
 
 # =============================================================================
+# STOCHASTIC THRESHOLD CONSTANTS (Grok validated: variance mode)
+# =============================================================================
+
+# Grok: "0.48 appears deterministic-only; noise can amplify penalties below ~0.5"
+# Grok: "expect upward adjustment (e.g., 0.52+) for robustness"
+STOCHASTIC_AFFINITY_THRESHOLD = 0.52  # Base threshold for variance mode (Grok: 0.52+)
+DYNAMIC_THRESHOLD_SCALE = 0.8  # How much variance shifts threshold (threshold += scale * variance)
+VARIANCE_SWEEP_RANGE = (0.0, 0.15)  # Tuple defining sweep bounds for parameter exploration
+VARIANCE_SWEEP_STEPS = 10  # Granularity for variance sweep
+
+# =============================================================================
 # DOMAIN AFFINITY MATRIX (Grok 500-cycle cross-domain validation)
 # 5 domains: tesla, spacex, starlink, boring, neuralink
 # 10 pairs with physics-based affinities

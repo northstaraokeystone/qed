@@ -143,7 +143,24 @@ SCENARIO_CROSS_DOMAIN = SimConfig(
 )
 
 # =============================================================================
-# MANDATORY SCENARIOS LIST (7 total)
+# STOCHASTIC AFFINITY SCENARIO (8th mandatory - Grok validated)
+# Validates dynamic thresholding under variance mode
+# =============================================================================
+
+SCENARIO_STOCHASTIC_AFFINITY = SimConfig(
+    n_cycles=500,
+    n_initial_patterns=5,
+    wound_rate=0.1,
+    resource_budget=1.0,
+    random_seed=52,
+    scenario_name="STOCHASTIC_AFFINITY",
+    variance_inheritance="INHERIT",
+    inherit_variance_decay=0.95,
+    reset_variance_prior=0.1
+)
+
+# =============================================================================
+# MANDATORY SCENARIOS LIST (8 total)
 # =============================================================================
 
 MANDATORY_SCENARIOS = [
@@ -154,4 +171,5 @@ MANDATORY_SCENARIOS = [
     "THERMODYNAMIC",
     "GODEL",
     "CROSS_DOMAIN",
+    "STOCHASTIC_AFFINITY",
 ]
