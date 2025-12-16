@@ -22,6 +22,8 @@ from .types_config import (
     SCENARIO_VARIANCE_MULTIVERSE,
     # Cross-domain recombination scenario (Grok 500-cycle validation)
     SCENARIO_CROSS_DOMAIN,
+    # Stochastic affinity scenario (8th mandatory - Grok validated)
+    SCENARIO_STOCHASTIC_AFFINITY,
     MANDATORY_SCENARIOS,
 )
 from .types_state import SimState, Seed, Beacon, Counselor, Crystal, FitnessDistribution
@@ -195,6 +197,8 @@ __all__ = [
     "SCENARIO_VARIANCE_MULTIVERSE",
     # Cross-domain scenario
     "SCENARIO_CROSS_DOMAIN",
+    # Stochastic affinity scenario
+    "SCENARIO_STOCHASTIC_AFFINITY",
     "MANDATORY_SCENARIOS",
     # Constants
     "PatternState",

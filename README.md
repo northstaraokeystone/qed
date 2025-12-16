@@ -29,7 +29,7 @@ Higher versions (v6-v12) add auditability (receipts, manifests), cross-company l
 | **v9** | Portfolio & Causality | PortfolioBinder; CausalGraph; EventStream; ROI gate; bidirectional causality |
 | **v10** | Autonomous Agents | HUNTER (entropy detection); SHEPHERD (healing); unified_loop 8-phase; entropy.py primitives |
 | **v11** | Immune System | Risk scoring; multi-dimensional fitness; autoimmune SELF protection; wound tracking; Thompson sampling |
-| **v12** | Agent Genesis | ARCHITECT blueprints; autocatalysis birth/death; recombination breeding; receipt completeness L0-L4; sim.py Monte Carlo validation |
+| **v12** | Agent Genesis | ARCHITECT blueprints; autocatalysis birth/death; recombination breeding; receipt completeness L0-L4; sim/ Monte Carlo validation; dynamic thresholding; stochastic affinity mode; Grok model export |
 
 ## Architecture
 
@@ -74,9 +74,9 @@ Higher versions (v6-v12) add auditability (receipts, manifests), cross-company l
 │  └──────────────────────────────────────────────┘                   │
 │                      ↓                                               │
 │  ┌──────────────────────────────────────────────┐                   │
-│  │              sim.py (v12)                     │                   │
+│  │              sim/ (v12)                       │                   │
 │  │    Monte Carlo validation before production  │                   │
-│  │    6 scenarios │ Grok export │ 2nd law proof │                   │
+│  │    8 scenarios │ Grok export │ 2nd law proof │                   │
 │  └──────────────────────────────────────────────┘                   │
 │                      ↓                                               │
 │  DECISIONS OUT (compressed telemetry + audit trail)                 │
@@ -106,7 +106,7 @@ Higher versions (v6-v12) add auditability (receipts, manifests), cross-company l
 
 **Receipt Completeness.** Five receipt levels form meta-awareness: L0 (telemetry), L1 (agents), L2 (paradigm shifts), L3 (paradigm quality), L4 (receipt system itself). When L4 feeds back to L0, QED can audit QED. Not AGI—self-auditing within Gödel bounds. `godel_layer()` returns 'L0': base layer hits undecidability first.
 
-**Simulation-First Validation.** No v12 feature ships without passing sim.py Monte Carlo. Six mandatory scenarios: BASELINE, STRESS, GENESIS, SINGULARITY, THERMODYNAMIC, GÖDEL. Entropy conservation validated every cycle: sum(entropy_in) = sum(entropy_out) + work_done. From Grok exchange: 2nd law constrains agents—they must export disorder.
+**Simulation-First Validation.** No v12 feature ships without passing sim/ Monte Carlo. Eight mandatory scenarios: BASELINE, STRESS, GENESIS, SINGULARITY, THERMODYNAMIC, GÖDEL, CROSS_DOMAIN, STOCHASTIC_AFFINITY. Entropy conservation validated every cycle: sum(entropy_in) = sum(entropy_out) + work_done. Dynamic thresholding adapts tolerance per cycle based on population churn, wound rate, and fitness uncertainty. From Grok exchange: 2nd law constrains agents—they must export disorder.
 
 ## Quick Start
 
@@ -156,10 +156,10 @@ python qed.py --config configs/qed_config.json --hook tesla --input telemetry.js
 
 ```bash
 # Validate all v12 dynamics before production
-python -c "from sim import run_simulation, SCENARIO_BASELINE; print(run_simulation(SCENARIO_BASELINE).statistics)"
+python -c "from sim import run_simulation, SCENARIO_BASELINE; print(run_simulation(SCENARIO_BASELINE))"
 
-# Run all 6 mandatory scenarios
-python -m pytest tests/test_qed_v12.py -v -k "scenario"
+# Run all 8 mandatory scenarios
+python -c "from sim import run_simulation, MANDATORY_SCENARIOS, SimConfig; [print(f'{s}: OK') for s in MANDATORY_SCENARIOS]"
 ```
 
 ## Configuration
@@ -184,13 +184,21 @@ qed_config.json example:
 qed/
 ├── qed.py                    # Core compression engine (v5+)
 ├── receipts.py               # Receipt emission (v6+)
-├── manifest.py               # Run manifest generation (v6+)
-├── edge_lab.py               # Edge scenario validation (v6+)
-├── mesh_view.py              # Cross-company dashboard (v6+)
-├── clarity_clean.py          # Receipt → text + audit (v7+)
+├── edge_lab_v1.py            # Edge scenario validation v1 (v6+)
+├── edge_lab_v2.py            # Edge scenario validation v2 (v7+)
+├── mesh_view_v1.py           # Cross-company dashboard v1 (v6+)
+├── mesh_view_v2.py           # Cross-company dashboard v2 (v7+)
+├── mesh_view_v3.py           # Cross-company dashboard v3 (v8+)
+├── clarity_clean_adapter.py  # Receipt → text + audit (v7+)
 ├── truthlink.py              # DecisionPacket builder (v8+)
-├── config.py                 # Config validation + merge (v8+)
-├── portfolio_binder.py       # Cross-company aggregation (v9+)
+├── decision_packet.py        # DecisionPacket types (v8+)
+├── config_schema.py          # Config schema definitions (v8+)
+├── shared_anomalies.py       # Cross-company anomaly library (v7+)
+├── physics_injection.py      # Physics perturbation injection (v7+)
+├── cross_domain.py           # Cross-domain pattern detection (v7+)
+├── nhtsa_pipeline.py         # NHTSA anomaly ingestion (v7+)
+├── binder.py                 # Query binding primitives (v9+)
+├── portfolio_aggregator.py   # Cross-company aggregation (v9+)
 ├── causal_graph.py           # Root cause tracing (v9+)
 ├── event_stream.py           # CQRS append-only log (v9+)
 ├── entropy.py                # Shannon entropy primitives (v10+)
@@ -202,26 +210,63 @@ qed/
 ├── autoimmune.py             # SELF/OTHER distinction (v11+)
 ├── wound.py                  # Automation gap tracking (v11+)
 ├── meta.py                   # Paradigm shift tracking (v11+)
+├── proof.py                  # Proof generation (v11+)
+├── sympy_constraints.py      # Symbolic constraint validation (v6+)
 ├── autocatalysis.py          # Birth/death detection (v12+)
 ├── architect.py              # Wound-to-blueprint synthesis (v12+)
 ├── recombine.py              # Sexual reproduction of patterns (v12+)
 ├── receipt_completeness.py   # L0-L4 singularity detection (v12+)
 ├── population.py             # Entropy-governed population (v12+)
-├── sim.py                    # Monte Carlo simulation harness (v12+)
+├── sim/                      # v12 Monte Carlo simulation package
+│   ├── __init__.py           # Public API exports
+│   ├── cycle.py              # Core simulation loop
+│   ├── constants.py          # Simulation constants + thresholds
+│   ├── types_config.py       # SimConfig + 8 mandatory scenarios
+│   ├── types_state.py        # SimState, Seed, Beacon, Crystal
+│   ├── types_result.py       # SimResult
+│   ├── dynamics_lifecycle.py # Autocatalysis + selection
+│   ├── dynamics_genesis.py   # Wound, recombination, genesis
+│   ├── dynamics_quantum.py   # Superposition, measurement, Gödel
+│   ├── validation.py         # Conservation + hidden risk detection
+│   ├── measurement.py        # State measurement primitives
+│   ├── vacuum_fluctuation.py # Vacuum floor dynamics
+│   ├── vacuum_flux.py        # Hawking flux computation
+│   ├── perturbation_core.py  # Basin escape, resonance
+│   ├── perturbation_tracking.py # Structure formation tracking
+│   ├── nucleation_seeds.py   # Seed initialization
+│   ├── nucleation_crystals.py # Crystallization detection
+│   ├── nucleation_evolution.py # Seed evolution
+│   ├── variance.py           # Variance inheritance
+│   └── export.py             # Grok model export
+├── hooks/                    # Company-specific telemetry hooks
+│   ├── tesla.py
+│   ├── spacex.py
+│   ├── starlink.py
+│   ├── boring.py
+│   ├── neuralink.py
+│   └── xai.py
 ├── data/
-│   ├── receipts/             # Receipt JSONL storage
-│   ├── manifests/            # Run manifest JSON
-│   └── differentials/        # State cache (optional)
-├── configs/
-│   └── qed_config.json       # Runtime configuration
+│   ├── config_templates/     # Company config templates
+│   ├── edge_lab_scenarios.jsonl
+│   ├── edge_lab_sample.jsonl
+│   ├── nhtsa_sample.jsonl
+│   ├── shared_anomalies.jsonl
+│   ├── events/
+│   ├── graph/
+│   ├── packets/
+│   └── differentials/
 ├── tests/
-│   ├── test_qed_v6.py
-│   ├── test_qed_v7.py
-│   ├── test_qed_v8.py
-│   ├── test_qed_v9.py
-│   ├── test_qed_v10.py
-│   ├── test_qed_v11.py
-│   ├── test_qed_v12.py
+│   ├── test_qed.py           # Core tests
+│   ├── test_qed_v6.py        # v6 receipts tests
+│   ├── test_qed_v7.py        # v7 physics tests
+│   ├── test_qed_v8.py        # v8 DecisionPacket tests
+│   ├── test_qed_v9.py        # v9 causal tests
+│   ├── test_qed_v10.py       # v10 agent tests
+│   ├── test_qed_v11.py       # v11 immune tests
+│   ├── test_variance_sim.py  # Variance inheritance tests
+│   ├── test_export.py        # Grok export tests
+│   ├── test_adaptive_tolerance.py  # Dynamic threshold tests
+│   ├── test_vacuum_model.py  # Vacuum fluctuation tests
 │   └── smoke/
 │       ├── test_smoke_v6.sh
 │       ├── test_smoke_v7.sh
@@ -229,7 +274,18 @@ qed/
 │       ├── test_smoke_v9.sh
 │       ├── test_smoke_v10.sh
 │       └── results/
-├── V12_NOTES.md              # Grok exchange insights, Gödel bounds
+├── notes/
+│   ├── V6_NOTES.md
+│   ├── V7_NOTES.md
+│   ├── V8_NOTES.md
+│   ├── V9_NOTES.md
+│   ├── V10_NOTES.md
+│   ├── V11_NOTES.md
+│   └── V12_NOTES.md          # Grok exchange insights, Gödel bounds
+├── archive/
+│   └── deprecated/           # Archived modules (see README)
+├── k8s/
+│   └── qed-deployment.yaml   # Kubernetes deployment
 └── CLAUDEME.md               # Project standards
 ```
 
@@ -284,7 +340,7 @@ qed/
 | recombine.py | Sexual reproduction | Pattern pairs | offspring_created |
 | receipt_completeness.py | L0-L4 singularity detection | Receipt ledger | completeness_check |
 | population.py | Entropy-governed population | Patterns + resources | population_snapshot |
-| sim.py | Monte Carlo simulation | SimConfig | SimResult + traces |
+| sim/ | Monte Carlo simulation package | SimConfig | SimResult + traces |
 
 ## Agent Taxonomy
 
@@ -326,19 +382,40 @@ pytest tests/test_qed_v12.py -v  # Genesis + simulation
 ### Simulation Validation (v12)
 
 ```bash
-# Run all 6 mandatory scenarios
+# Run all 8 mandatory scenarios
 python -c "
-from sim import (run_simulation, SCENARIO_BASELINE, SCENARIO_STRESS, 
-                 SCENARIO_GENESIS, SCENARIO_SINGULARITY, 
-                 SCENARIO_THERMODYNAMIC, SCENARIO_GODEL)
+from sim import (
+    run_simulation, MANDATORY_SCENARIOS,
+    SCENARIO_BASELINE, SCENARIO_STRESS, SCENARIO_GENESIS,
+    SCENARIO_SINGULARITY, SCENARIO_THERMODYNAMIC, SCENARIO_GODEL,
+    SCENARIO_CROSS_DOMAIN, SCENARIO_STOCHASTIC_AFFINITY
+)
 
-for scenario in [SCENARIO_BASELINE, SCENARIO_STRESS, SCENARIO_GENESIS,
-                 SCENARIO_SINGULARITY, SCENARIO_THERMODYNAMIC, SCENARIO_GODEL]:
+scenarios = [
+    SCENARIO_BASELINE, SCENARIO_STRESS, SCENARIO_GENESIS,
+    SCENARIO_SINGULARITY, SCENARIO_THERMODYNAMIC, SCENARIO_GODEL,
+    SCENARIO_CROSS_DOMAIN, SCENARIO_STOCHASTIC_AFFINITY
+]
+
+for scenario in scenarios:
     result = run_simulation(scenario)
     status = 'PASS' if not result.violations else 'FAIL'
-    print(f'{scenario}: {status}')
+    print(f'{scenario.scenario_name}: {status}')
 "
 ```
+
+**8 Mandatory Scenarios:**
+
+| Scenario | Purpose | Cycles |
+|----------|---------|--------|
+| BASELINE | Normal operation validation | 1000 |
+| STRESS | High wound rate, low resources | 1000 |
+| GENESIS | Pattern reproduction validation | 500 |
+| SINGULARITY | Long-run L0-L4 completeness | 10000 |
+| THERMODYNAMIC | Entropy conservation proof | 1000 |
+| GÖDEL | Undecidability boundary testing | 500 |
+| CROSS_DOMAIN | Cross-company pattern recombination | 500 |
+| STOCHASTIC_AFFINITY | Dynamic thresholding under variance | 500 |
 
 ### Full Test Suite
 
