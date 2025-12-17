@@ -24,6 +24,10 @@ from .types_config import (
     SCENARIO_CROSS_DOMAIN,
     # Stochastic affinity scenario (8th mandatory - Grok validated)
     SCENARIO_STOCHASTIC_AFFINITY,
+    # Stacked mitigation scenarios (per Grok: deploy combined tau strategies)
+    SCENARIO_STACKED_MITIGATION,
+    SCENARIO_P_SENSITIVITY,
+    SCENARIO_ROI_GATE,
     MANDATORY_SCENARIOS,
 )
 from .types_state import SimState, Seed, Beacon, Counselor, Crystal, FitnessDistribution
@@ -199,6 +203,10 @@ __all__ = [
     "SCENARIO_CROSS_DOMAIN",
     # Stochastic affinity scenario
     "SCENARIO_STOCHASTIC_AFFINITY",
+    # Stacked mitigation scenarios
+    "SCENARIO_STACKED_MITIGATION",
+    "SCENARIO_P_SENSITIVITY",
+    "SCENARIO_ROI_GATE",
     "MANDATORY_SCENARIOS",
     # Constants
     "PatternState",

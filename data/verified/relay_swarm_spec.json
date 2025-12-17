@@ -1,0 +1,38 @@
+{
+  "version": "1.0.0",
+  "source": "2024-2025 Marslink concept + laser scaling",
+  "swarm": {
+    "initial_sat_count": 30,
+    "sat_count_range": [20, 40],
+    "orbit_altitude_km": [500, 1000],
+    "orbit_type": "areocentric_phased"
+  },
+  "relay_nodes": {
+    "count": 8,
+    "count_range": [5, 10],
+    "orbit_type": "heliocentric_cycler",
+    "purpose": "conjunction_bypass"
+  },
+  "bandwidth": {
+    "initial_mbps": 50,
+    "initial_range_mbps": [4, 100],
+    "v2_gbps": 1.0,
+    "link_type": "optical_crosslink"
+  },
+  "cost": {
+    "per_wave_usd_millions": 100,
+    "range_usd_millions": [50, 150],
+    "per_sat_usd_millions": 10
+  },
+  "deployment": {
+    "window_years": [2026, 2028],
+    "sats_per_starship": 15,
+    "sats_per_starship_range": [10, 20]
+  },
+  "performance": {
+    "eff_tau_minutes": 8.5,
+    "eff_tau_range_minutes": [7, 10],
+    "blackout_coverage_pct": 99.5
+  },
+  "payload_hash": "COMPUTE_ON_LOAD"
+}

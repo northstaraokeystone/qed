@@ -160,7 +160,47 @@ SCENARIO_STOCHASTIC_AFFINITY = SimConfig(
 )
 
 # =============================================================================
-# MANDATORY SCENARIOS LIST (8 total)
+# STACKED MITIGATION SCENARIOS (Per Grok: deploy combined tau strategies)
+# =============================================================================
+
+SCENARIO_STACKED_MITIGATION = SimConfig(
+    n_cycles=100,
+    n_initial_patterns=5,
+    wound_rate=0.1,
+    resource_budget=1.0,
+    random_seed=53,
+    scenario_name="STACKED_MITIGATION",
+    variance_inheritance="INHERIT",
+    inherit_variance_decay=0.95,
+    reset_variance_prior=0.1
+)
+
+SCENARIO_P_SENSITIVITY = SimConfig(
+    n_cycles=100,
+    n_initial_patterns=5,
+    wound_rate=0.1,
+    resource_budget=1.0,
+    random_seed=54,
+    scenario_name="P_SENSITIVITY",
+    variance_inheritance="INHERIT",
+    inherit_variance_decay=0.95,
+    reset_variance_prior=0.1
+)
+
+SCENARIO_ROI_GATE = SimConfig(
+    n_cycles=100,
+    n_initial_patterns=5,
+    wound_rate=0.1,
+    resource_budget=1.0,
+    random_seed=55,
+    scenario_name="ROI_GATE",
+    variance_inheritance="INHERIT",
+    inherit_variance_decay=0.95,
+    reset_variance_prior=0.1
+)
+
+# =============================================================================
+# MANDATORY SCENARIOS LIST (11 total - including mitigation scenarios)
 # =============================================================================
 
 MANDATORY_SCENARIOS = [
@@ -172,4 +212,7 @@ MANDATORY_SCENARIOS = [
     "GODEL",
     "CROSS_DOMAIN",
     "STOCHASTIC_AFFINITY",
+    "STACKED_MITIGATION",
+    "P_SENSITIVITY",
+    "ROI_GATE",
 ]
