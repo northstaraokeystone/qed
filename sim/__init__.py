@@ -28,6 +28,8 @@ from .types_config import (
     SCENARIO_STACKED_MITIGATION,
     SCENARIO_P_SENSITIVITY,
     SCENARIO_ROI_GATE,
+    # Spaceflight telemetry compression scenario (Grok IFT-6 physics-based)
+    SCENARIO_SPACEFLIGHT,
     MANDATORY_SCENARIOS,
 )
 from .types_state import SimState, Seed, Beacon, Counselor, Crystal, FitnessDistribution
@@ -207,6 +209,7 @@ __all__ = [
     "SCENARIO_STACKED_MITIGATION",
     "SCENARIO_P_SENSITIVITY",
     "SCENARIO_ROI_GATE",
+    "SCENARIO_SPACEFLIGHT",
     "MANDATORY_SCENARIOS",
     # Constants
     "PatternState",

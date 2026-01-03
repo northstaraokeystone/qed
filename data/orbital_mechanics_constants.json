@@ -1,0 +1,119 @@
+{
+  "gravitational_parameters": {
+    "earth": {
+      "mu": 3.986004418e14,
+      "unit": "m^3/s^2",
+      "description": "Earth gravitational parameter (GM)"
+    },
+    "mars": {
+      "mu": 4.282837e13,
+      "unit": "m^3/s^2",
+      "description": "Mars gravitational parameter (GM)"
+    },
+    "moon": {
+      "mu": 4.9048695e12,
+      "unit": "m^3/s^2",
+      "description": "Moon gravitational parameter (GM)"
+    }
+  },
+  "planetary_radii": {
+    "earth": {
+      "equatorial": 6378137.0,
+      "polar": 6356752.3,
+      "mean": 6371000.0,
+      "unit": "m"
+    },
+    "mars": {
+      "equatorial": 3396200.0,
+      "polar": 3376200.0,
+      "mean": 3389500.0,
+      "unit": "m"
+    },
+    "moon": {
+      "mean": 1737400.0,
+      "unit": "m"
+    }
+  },
+  "atmospheric_parameters": {
+    "earth": {
+      "sea_level_density": 1.225,
+      "sea_level_temperature": 288.15,
+      "sea_level_pressure": 101325.0,
+      "scale_height": 8500.0,
+      "units": {
+        "density": "kg/m^3",
+        "temperature": "K",
+        "pressure": "Pa",
+        "scale_height": "m"
+      }
+    },
+    "mars": {
+      "surface_density": 0.020,
+      "surface_temperature": 210.0,
+      "surface_pressure": 636.0,
+      "scale_height": 11100.0,
+      "units": {
+        "density": "kg/m^3",
+        "temperature": "K",
+        "pressure": "Pa",
+        "scale_height": "m"
+      }
+    }
+  },
+  "surface_gravity": {
+    "earth": {
+      "g0": 9.80665,
+      "unit": "m/s^2"
+    },
+    "mars": {
+      "g0": 3.72076,
+      "unit": "m/s^2"
+    },
+    "moon": {
+      "g0": 1.62,
+      "unit": "m/s^2"
+    }
+  },
+  "vehicle_configs": {
+    "starship": {
+      "mass_kg": 100000,
+      "area_m2": 300,
+      "drag_coefficient": 1.5,
+      "lift_coefficient": 0.5,
+      "flight_regime": "lifting",
+      "body": "earth"
+    },
+    "dragon_capsule": {
+      "mass_kg": 12000,
+      "area_m2": 10,
+      "drag_coefficient": 1.2,
+      "lift_coefficient": 0.3,
+      "flight_regime": "ballistic",
+      "body": "earth"
+    },
+    "mars_sample_return": {
+      "mass_kg": 500,
+      "area_m2": 3,
+      "drag_coefficient": 1.4,
+      "lift_coefficient": 0.0,
+      "flight_regime": "ballistic",
+      "body": "mars"
+    }
+  },
+  "physical_constants": {
+    "speed_of_light": {
+      "value": 299792458,
+      "unit": "m/s"
+    },
+    "stefan_boltzmann": {
+      "value": 5.670374419e-8,
+      "unit": "W/(m^2*K^4)"
+    },
+    "boltzmann": {
+      "value": 1.380649e-23,
+      "unit": "J/K"
+    }
+  },
+  "reference": "IERS Conventions 2010, NASA Mars Fact Sheet 2021",
+  "version": "1.0"
+}

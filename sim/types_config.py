@@ -252,7 +252,23 @@ SCENARIO_CHAIN_INTEGRITY = SimConfig(
 )
 
 # =============================================================================
-# MANDATORY SCENARIOS LIST (15 total - including ledger scenarios)
+# SPACEFLIGHT TELEMETRY COMPRESSION SCENARIO (Per Grok: IFT-6 physics-based)
+# =============================================================================
+
+SCENARIO_SPACEFLIGHT = SimConfig(
+    n_cycles=200,
+    n_initial_patterns=5,
+    wound_rate=0.1,
+    resource_budget=1.0,
+    random_seed=60,
+    scenario_name="SPACEFLIGHT",
+    variance_inheritance="INHERIT",
+    inherit_variance_decay=0.95,
+    reset_variance_prior=0.1
+)
+
+# =============================================================================
+# MANDATORY SCENARIOS LIST (16 total - including spaceflight scenario)
 # =============================================================================
 
 MANDATORY_SCENARIOS = [
@@ -271,4 +287,5 @@ MANDATORY_SCENARIOS = [
     "DISTRIBUTED_RESILIENCE",
     "VOLUME_STRESS",
     "CHAIN_INTEGRITY",
+    "SPACEFLIGHT",
 ]
